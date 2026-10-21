@@ -1,0 +1,340 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+using Game.Kit;
+
+// 画面层：等距场景、贴图加载、HUD、菜单与结算面板。
+//
+// 布局按 1280×800 设计分辨率写死（CDraw.StageViewport 负责等比缩放到
+// 任意窗口），坐标全是逻辑像素。
+public class VoxelView {
+    public const int DesignW = 1280;
+    public const int DesignH = 800;
+
+    // 背包条槽位几何（画面与点击判定共用一份，免得两处对不上）。
+    public const int SlotSize = 64;
+    public const int SlotGap = 8;
+
+    public static int SlotX(int w, int kind) {
+        int total = VoxelWorld.KindCount * (VoxelView.SlotSize + VoxelView.SlotGap)
+            - VoxelView.SlotGap;
+        int x0 = (w - total) / 2;
+        return x0 + (kind - 1) * (VoxelView.SlotSize + VoxelView.SlotGap);
+    }
+
+    public static int SlotY(int h) { return h - 112; }
+
+    public string bgPath = "";
+    public string playerPath = "";
+    public string titlePath = "";
+    public string blueprintPath = "";
+    public string[] blockPaths = new string[VoxelWorld.KindCount];
+    public bool assetsReady;
+
+    // 载入贴图（找不到就退回纯色绘制，不崩）。
+    public void LoadAssets() {
+        this.bgPath = VoxelView.FindAsset("assets/bg_sky.png");
+        this.playerPath = VoxelView.FindAsset("assets/player.png");
+        this.titlePath = VoxelView.FindAsset("assets/title.png");
+        this.blueprintPath = VoxelView.FindAsset("assets/blueprint.png");
+        this.blockPaths[VoxelWorld.Grass] = VoxelView.FindAsset("assets/block_grass.png");
+        this.blockPaths[VoxelWorld.Stone] = VoxelView.FindAsset("assets/block_stone.png");
+        this.blockPaths[VoxelWorld.Wood] = VoxelView.FindAsset("assets/block_wood.png");
+        this.blockPaths[VoxelWorld.Ore] = VoxelView.FindAsset("assets/block_ore.png");
+        this.assetsReady = this.playerPath != ""
+            && this.blockPaths[VoxelWorld.Grass] != ""
+            && this.blockPaths[VoxelWorld.Stone] != "";
+    }
+
+    static string FindAsset(string rel) {
+        string p = Assets.Find(rel);
+        if (!File.Exists(p)) { return ""; }
+        return p;
+    }
+
+    public string BlockPath(int kind) {
+        if (kind <= 0 || kind >= VoxelWorld.KindCount) { return ""; }
+        return this.blockPaths[kind];
+    }
+
+    // 方块贴图（找不到贴图时退回纯色菱形，形状还在）。
+    public void DrawBlock(Canvas c, int kind, int left, int topY) {
+        string path = this.BlockPath(kind);
+        if (path != "") {
+            CDraw.BlitImage(c, path, left, topY, VoxelIso.BlockW, VoxelIso.BlockH);
+            return;
+        }
+        int col = 0xFF7C8B5A;
+        if (kind == VoxelWorld.Stone) { col = 0xFF80828A; }
+        if (kind == VoxelWorld.Wood) { col = 0xFF8A5F33; }
+        if (kind == VoxelWorld.Ore) { col = 0xFF4A6478; }
+        VoxelPaint.DiamondFill(c, left + VoxelIso.BlockW / 2, topY + VoxelIso.TH / 2,
+            VoxelIso.TW / 2, VoxelIso.TH / 2, col);
+        VoxelPaint.Fill(c, left + 8, topY + VoxelIso.TH, VoxelIso.BlockW - 16,
+            VoxelIso.LEVEL, col);
+    }
+
+    // 玩家立绘：脚踩在所在格的地面上。
+    public void DrawPlayer(Canvas c, VoxelGame game) {
+        int cx = game.iso.SX(game.playerX, game.playerZ);
+        int groundY = game.iso.SY(game.playerX, game.playerZ, 0);
+        int w = 48;
+        int h = 64;
+        int left = cx - w / 2;
+        int topY = groundY + 10 - h;
+        // 脚下投影，让角色贴地而不是浮着（先画影子，再画角色）。
+        VoxelPaint.DiamondFill(c, cx, groundY, 18, 9, 0x50000000);
+        if (this.playerPath != "") {
+            CDraw.BlitImage(c, this.playerPath, left, topY, w, h);
+        } else {
+            VoxelPaint.Fill(c, left + 12, topY + 8, 24, 48, 0xFFE08A3C);
+            VoxelPaint.Fill(c, left + 14, topY, 20, 14, 0xFF3A7BD5);
+        }
+    }
+
+    // 场景：背景 → 等距世界 → 图纸提示 → 放置光标
+    public void DrawScene(Canvas c, VoxelGame game, int w, int h) {
+        if (this.bgPath != "") {
+            CDraw.BlitImage(c, this.bgPath, 0, 0, w, h);
+        } else {
+            VoxelPaint.FillVGrad(c, 0, 0, w, h, 0xFF8FC7EE, 0xFFDCEBD2);
+        }
+        this.DrawWorld(c, game, w, h);
+        if (game.shell.Hint()) { this.DrawBlueprintHints(c, game); }
+        this.DrawCursor(c, game);
+    }
+
+    // 世界：按 x+z 升序（同深度再按 y 升序）画家算法画方块。
+    public void DrawWorld(Canvas c, VoxelGame game, int w, int h) {
+        VoxelWorld world = game.world;
+        VoxelIso iso = game.iso;
+        int maxD = VoxelWorld.SizeX + VoxelWorld.SizeZ - 2;
+        for (int d = 0; d <= maxD; d = d + 1) {
+            for (int x = 0; x < VoxelWorld.SizeX; x = x + 1) {
+                int z = d - x;
+                if (z < 0 || z >= VoxelWorld.SizeZ) { continue; }
+                int top = world.ColumnTop(x, z);
+                for (int y = 0; y < top; y = y + 1) {
+                    int kind = world.Get(x, y, z);
+                    if (kind == VoxelWorld.Air) { continue; }
+                    int left = iso.BlockLeft(x, z);
+                    int topY = iso.BlockTop(x, z, y);
+                    if (left > w || left + VoxelIso.BlockW < 0) { continue; }
+                    if (topY > h || topY + VoxelIso.BlockH < 0) { continue; }
+                    this.DrawBlock(c, kind, left, topY);
+                }
+            }
+        }
+        // 角色最后画：地形有高差，深度正确的画法会把人整个埋进崖壁后面，
+        // 玩家看不见自己就没法玩。等距建造类一律让角色压在场景上层。
+        this.DrawPlayer(c, game);
+    }
+
+    // 图纸提示：已满足的格子填一层淡色，没满足的画黄框。
+    public void DrawBlueprintHints(Canvas c, VoxelGame game) {
+        VoxelPlan plan = game.plans.At(game.planIndex);
+        if (plan == null) { return; }
+        for (int i = 0; i < plan.reqs.Length; i = i + 1) {
+            VoxelReq r = plan.reqs[i];
+            int cx = game.iso.SX(r.x, r.z);
+            int cy = game.iso.SY(r.x, r.z, r.y);
+            if (game.world.Get(r.x, r.y, r.z) == r.kind) {
+                VoxelPaint.DiamondFill(c, cx, cy, VoxelIso.TW / 2 - 4,
+                    VoxelIso.TH / 2 - 2, 0x30FFFFFF);
+                continue;
+            }
+            VoxelPaint.Diamond(c, cx, cy, VoxelIso.TW / 2 - 3, VoxelIso.TH / 2 - 2,
+                0xB0FFC24A, 2);
+        }
+    }
+
+    // 放置光标：面朝方向的相邻格 + 当前建造高度。
+    public void DrawCursor(Canvas c, VoxelGame game) {
+        int tx = game.TargetX();
+        int tz = game.TargetZ();
+        int ty = game.cursorY();
+        if (!game.world.InBounds(tx, ty, tz)) { return; }
+        int cx = game.iso.SX(tx, tz);
+        int cy = game.iso.SY(tx, tz, ty);
+        int ok = game.build.CanPlace(tx, ty, tz, game.selected) ? 1 : 0;
+        int col = 0xFFFFE27A;
+        if (ok == 0) { col = 0xFFFF7A6A; }
+        VoxelPaint.DiamondFill(c, cx, cy, VoxelIso.TW / 2 - 2, VoxelIso.TH / 2 - 1,
+            0x40FFFFFF);
+        VoxelPaint.Diamond(c, cx, cy, VoxelIso.TW / 2 - 2, VoxelIso.TH / 2 - 1,
+            col, 3);
+        // 竖向标杆：从光标往下连到地面，玩家一眼看出当前建造高度。
+        int groundY = game.iso.SY(tx, tz, 0);
+        if (groundY > cy) {
+            VoxelPaint.Line(c, cx, cy, cx, groundY, 0x70FFE27A, 2);
+        }
+    }
+
+    // HUD：顶栏（图纸进度 / 计时）+ 左侧图纸卡 + 底部背包条 + 操作提示。
+    public void DrawHud(Canvas c, VoxelGame game, int w, int h) {
+        VoxelPlan plan = game.plans.At(game.planIndex);
+        VoxelPaint.Fill(c, 0, 0, w, 46, 0xC0101820);
+        VoxelPaint.Fill(c, 0, 46, w, 1, 0x66FFC24A);
+        VoxelPaint.Text(c, "立方世界 · VOXEL", 16, 12, 22, 0xFFFFD98A);
+        string planText = "图纸 " + Convert.ToString(game.planIndex + 1) + "/"
+            + Convert.ToString(game.plans.Count());
+        if (plan != null) {
+            planText = planText + "   " + plan.name + "   "
+                + Convert.ToString(game.plans.Progress(game.planIndex, game.world))
+                + "/" + Convert.ToString(plan.reqs.Length);
+        } else {
+            planText = "图纸 " + Convert.ToString(game.plans.Count()) + "/"
+                + Convert.ToString(game.plans.Count()) + "   全部建成";
+        }
+        VoxelPaint.Text(c, planText, 250, 16, 15, 0xFFC8D8E8);
+        int left = game.planLimitMs();
+        string timeText = VoxelPaint.FmtTime(game.elapsedMs);
+        if (left > 0) { timeText = timeText + "   剩余 " + VoxelPaint.FmtTime(left); }
+        VoxelPaint.Text(c, timeText, w - 210, 16, 15, 0xFFFFE0A0);
+
+        if (plan != null) { this.DrawPlanCard(c, game, 16, 58); }
+
+        // 背包条
+        int slot = VoxelView.SlotSize;
+        int gap = VoxelView.SlotGap;
+        int total = VoxelWorld.KindCount * (slot + gap) - gap;
+        int x0 = (w - total) / 2;
+        int y0 = VoxelView.SlotY(h);
+        for (int k = 1; k < VoxelWorld.KindCount; k = k + 1) {
+            int x = x0 + (k - 1) * (slot + gap);
+            bool on = (k == game.selected);
+            VoxelPaint.FillRound(c, x, y0, slot, slot, 6,
+                on ? 0xE02A3A4A : 0xB01A2028);
+            VoxelPaint.Round(c, x, y0, slot, slot, 6,
+                on ? 0xFFFFC24A : 0x66FFFFFF, on ? 3 : 1);
+            string path = this.BlockPath(k);
+            if (path != "") {
+                CDraw.BlitImage(c, path, x + 8, y0 + 2, slot - 16, slot - 16);
+            }
+            VoxelPaint.Text(c, Convert.ToString(game.build.Stock(k)),
+                x + slot - 22, y0 + slot - 22, 16, 0xFFFFFFFF);
+            VoxelPaint.Text(c, Convert.ToString(k), x + 6, y0 + 4, 14, 0xCCFFFFFF);
+        }
+        VoxelPaint.Text(c, "1 草  2 石  3 木  4 矿   ·   Q/E 升降建造高度   ·   "
+            + "WASD/方向键 移动   ·   左键放置  右键破坏   ·   Esc 设置",
+            16, h - 26, 14, 0xD8E8F0F8);
+    }
+
+    // 左侧图纸卡：羊皮纸底板 + 图纸名 + 进度 + 材料清单。
+    public void DrawPlanCard(Canvas c, VoxelGame game, int x, int y) {
+        VoxelPlan plan = game.plans.At(game.planIndex);
+        int cw = 236;
+        int ch = 168;
+        if (this.blueprintPath != "") {
+            CDraw.BlitImage(c, this.blueprintPath, x, y, cw, ch);
+        } else {
+            VoxelPaint.FillRound(c, x, y, cw, ch, 6, 0xF0221A10);
+        }
+        VoxelPaint.Round(c, x, y, cw, ch, 6, 0xFF8A6A2E, 2);
+        if (plan == null) { return; }
+        VoxelPaint.Text(c, "图纸 " + Convert.ToString(game.planIndex + 1)
+            + " · " + plan.name, x + 12, y + 12, 17, 0xFF3A2A12);
+        VoxelPaint.Text(c, plan.brief, x + 12, y + 36, 13, 0xFF5A4426);
+        int done = game.plans.Progress(game.planIndex, game.world);
+        VoxelPaint.Text(c, "进度 " + Convert.ToString(done) + " / "
+            + Convert.ToString(plan.reqs.Length), x + 12, y + 56, 15, 0xFF2E4A6B);
+        VoxelPaint.Fill(c, x + 12, y + 78, cw - 24, 6, 0x55FFFFFF);
+        int w = cw - 24;
+        int fw = done * w / plan.reqs.Length;
+        if (fw < 1 && done > 0) { fw = 1; }
+        VoxelPaint.Fill(c, x + 12, y + 78, fw, 6, 0xFF3E8FD6);
+        string[] names = new string[] { "草", "石", "木", "矿" };
+        int ty = y + 96;
+        for (int k = 1; k < VoxelWorld.KindCount; k = k + 1) {
+            int need = game.plans.NeedOf(game.planIndex, k);
+            if (need <= 0) { continue; }
+            VoxelPaint.Text(c, names[k - 1] + " ×" + Convert.ToString(need),
+                x + 12, ty, 14, 0xFF4A3418);
+            ty = ty + 19;
+        }
+    }
+
+    // 菜单画面
+    public void DrawMenu(Canvas c, VoxelGame game, int w, int h) {
+        if (this.bgPath != "") {
+            CDraw.BlitImage(c, this.bgPath, 0, 0, w, h);
+        } else {
+            VoxelPaint.FillVGrad(c, 0, 0, w, h, 0xFF8FC7EE, 0xFFDCEBD2);
+        }
+        VoxelPaint.Fill(c, 0, h - 190, w, 190, 0x70081018);
+        int pw = 620;
+        if (this.titlePath != "") {
+            CDraw.BlitImage(c, this.titlePath, (w - pw) / 2, 70, pw, pw / 4);
+        }
+        VoxelPaint.TextCentered(c, "立  方  世  界", w / 2, 130, w, 56, 0xFFFFF0C0);
+        VoxelPaint.TextCentered(c, "VOXEL · 等距体素建造", w / 2, 196, w, 18, 0xFFEFF6FA);
+        VoxelPaint.TextCentered(c, "按图纸把石台、灯柱、瞭望塔一层层建起来",
+            w / 2, 226, w, 16, 0xFFD2E4EE);
+        string best = "尚无记录";
+        if (game.shell.BestTimeMs() > 0) {
+            best = VoxelPaint.FmtTimeFine(game.shell.BestTimeMs());
+        }
+        VoxelPaint.TextCentered(c,
+            "累计建成图纸 " + Convert.ToString(game.shell.BlueprintsDone())
+            + "   累计放置方块 " + Convert.ToString(game.shell.BlocksPlaced())
+            + "   最快通关 " + best
+            + "   出场 " + Convert.ToString(game.shell.Runs()) + " 次",
+            w / 2, h - 150, w, 18, 0xFFE8F2F8);
+        VoxelPaint.TextCentered(c, "点击「开始建造」· Esc 打开设置",
+            w / 2, h - 110, w, 15, 0xFFB8CEDC);
+    }
+
+    // 结算面板
+    public void DrawResult(Canvas c, VoxelGame game, int w, int h) {
+        VoxelPaint.Fill(c, 0, 0, w, h, 0xB0000000);
+        int pw = 560;
+        int ph = 350;
+        int px = (w - pw) / 2;
+        int py = (h - ph) / 2 - 20;
+        VoxelPaint.FillRound(c, px, py, pw, ph, 10, 0xF01C1710);
+        VoxelPaint.Round(c, px, py, pw, ph, 10, 0xFFB08A3C, 3);
+        VoxelPaint.Fill(c, px + 18, py + 14, pw - 36, 1, 0x55B08A3C);
+        string title = "建造完成";
+        int titleCol = 0xFFFFE07A;
+        if (game.failed) {
+            title = "建造失败";
+            titleCol = 0xFFFF8A7A;
+        }
+        VoxelPaint.TextCentered(c, title, px + pw / 2, py + 28, pw, 34, titleCol);
+        string reason = game.failReason;
+        if (reason == "") { reason = "三张图纸全部建成，工地交付"; }
+        VoxelPaint.TextCentered(c, reason, px + pw / 2, py + 72, pw, 16, 0xFFEDE0C8);
+        int ty = py + 112;
+        string[] labels = new string[] {
+            "建成图纸", "本局用时", "最快通关", "本局放置", "累计放置"
+        };
+        string[] values = new string[] {
+            Convert.ToString(game.planIndex) + " / " + Convert.ToString(game.plans.Count()),
+            VoxelPaint.FmtTimeFine(game.elapsedMs),
+            game.shell.BestTimeMs() > 0 ? VoxelPaint.FmtTimeFine(game.shell.BestTimeMs()) : "—",
+            Convert.ToString(game.runPlaced),
+            Convert.ToString(game.shell.BlocksPlaced() + game.runPlaced)
+        };
+        for (int i = 0; i < labels.Length; i = i + 1) {
+            VoxelPaint.Text(c, labels[i], px + 44, ty, 17, 0xFFC8B48C);
+            VoxelPaint.Text(c, values[i], px + 250, ty, 17, 0xFFFFF0D0);
+            ty = ty + 32;
+        }
+    }
+
+    // 按钮
+    public void DrawButton(Canvas c, string label, int x, int y, int w, int h,
+                           bool enabled, bool hover, int kind) {
+        int bg = 0xFF2A3A2E;
+        int edge = 0xFF44604E;
+        int text = 0xFFEAF2F8;
+        if (kind == 1) { bg = 0xFF3E8FD6; edge = 0xFF8FC8F0; }
+        if (!enabled) { bg = 0xFF2A2F31; edge = 0xFF3A4145; text = 0xFF6E7A80; }
+        if (enabled && hover) {
+            if (kind == 1) { bg = 0xFF57A6E6; } else { bg = 0xFF35604E; }
+        }
+        VoxelPaint.FillRound(c, x, y, w, h, 6, bg);
+        VoxelPaint.Round(c, x, y, w, h, 6, edge, 2);
+        VoxelPaint.TextCentered(c, label, x + w / 2, y + (h - 20) / 2, w, 19, text);
+    }
+}

@@ -1,0 +1,140 @@
+using System;
+using System.Collections.Generic;
+using Game.Kit;
+
+// 图纸里的一格要求：坐标 + 必须的材料类型。
+public class VoxelReq {
+    public int x;
+    public int y;
+    public int z;
+    public int kind;
+
+    public VoxelReq(int x, int y, int z, int kind) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.kind = kind;
+    }
+}
+
+// 一张图纸：名字 + 要求清单 + 限时（秒）。
+public class VoxelPlan {
+    public string name;
+    public string brief;
+    public VoxelReq[] reqs;
+    public int limitSeconds;
+
+    public VoxelPlan(string name, string brief, VoxelReq[] reqs, int limitSeconds) {
+        this.name = name;
+        this.brief = brief;
+        this.reqs = reqs;
+        this.limitSeconds = limitSeconds;
+    }
+}
+
+// 图纸集：三张，逐张解锁。
+//
+// 判定口径：**每格都要类型与位置都对**才算建成——只看数量不算，
+// 只看位置不算。所以 SatisfiedOf 数的是"该格当前正好是要求的材料"。
+public class VoxelPlans {
+    List<VoxelPlan> list;
+
+    public VoxelPlans() {
+        this.list = new List<VoxelPlan>();
+        this.list.Add(this.MakePlatform());
+        this.list.Add(this.MakeLamp());
+        this.list.Add(this.MakeTower());
+    }
+
+    // 图纸一：3×3 石台（9 石）
+    VoxelPlan MakePlatform() {
+        List<VoxelReq> reqs = new List<VoxelReq>();
+        for (int z = 15; z <= 17; z = z + 1) {
+            for (int x = 15; x <= 17; x = x + 1) {
+                reqs.Add(new VoxelReq(x, 1, z, VoxelWorld.Stone));
+            }
+        }
+        return new VoxelPlan("石台", "3×3 石台铺地基",
+            VoxelPlans.ToArray(reqs), 100);
+    }
+
+    // 图纸二：台心木柱 + 柱顶矿灯（2 木 + 1 矿）
+    VoxelPlan MakeLamp() {
+        List<VoxelReq> reqs = new List<VoxelReq>();
+        reqs.Add(new VoxelReq(16, 2, 16, VoxelWorld.Wood));
+        reqs.Add(new VoxelReq(16, 3, 16, VoxelWorld.Wood));
+        reqs.Add(new VoxelReq(16, 4, 16, VoxelWorld.Ore));
+        return new VoxelPlan("灯柱", "台心立木柱，柱顶挂矿灯",
+            VoxelPlans.ToArray(reqs), 100);
+    }
+
+    // 图纸三：四角瞭望塔（8 木 + 4 矿 + 4 草）
+    VoxelPlan MakeTower() {
+        List<VoxelReq> reqs = new List<VoxelReq>();
+        int[] xs = new int[] { 14, 18, 14, 18 };
+        int[] zs = new int[] { 14, 14, 18, 18 };
+        for (int i = 0; i < 4; i = i + 1) {
+            reqs.Add(new VoxelReq(xs[i], 1, zs[i], VoxelWorld.Wood));
+            reqs.Add(new VoxelReq(xs[i], 2, zs[i], VoxelWorld.Wood));
+            reqs.Add(new VoxelReq(xs[i], 3, zs[i], VoxelWorld.Ore));
+            reqs.Add(new VoxelReq(xs[i], 4, zs[i], VoxelWorld.Grass));
+        }
+        return new VoxelPlan("瞭望塔", "四角木柱挑矿灯，顶上盖草棚",
+            VoxelPlans.ToArray(reqs), 220);
+    }
+
+    static VoxelReq[] ToArray(List<VoxelReq> list) {
+        VoxelReq[] arr = new VoxelReq[list.Count];
+        for (int i = 0; i < list.Count; i = i + 1) { arr[i] = list[i]; }
+        return arr;
+    }
+
+    public int Count() { return this.list.Count; }
+
+    public VoxelPlan At(int i) {
+        if (i < 0 || i >= this.list.Count) { return null; }
+        return this.list[i];
+    }
+
+    // 已满足的格数（类型与位置都对才算）
+    public int Progress(int i, VoxelWorld w) {
+        VoxelPlan p = this.At(i);
+        if (p == null) { return 0; }
+        int n = 0;
+        for (int k = 0; k < p.reqs.Length; k = k + 1) {
+            VoxelReq r = p.reqs[k];
+            if (w.Get(r.x, r.y, r.z) == r.kind) { n = n + 1; }
+        }
+        return n;
+    }
+
+    public bool Complete(int i, VoxelWorld w) {
+        VoxelPlan p = this.At(i);
+        if (p == null) { return false; }
+        if (p.reqs.Length == 0) { return false; }
+        return this.Progress(i, w) == p.reqs.Length;
+    }
+
+    // 这张图纸一共要多少某材料
+    public int NeedOf(int i, int kind) {
+        VoxelPlan p = this.At(i);
+        if (p == null) { return 0; }
+        int n = 0;
+        for (int k = 0; k < p.reqs.Length; k = k + 1) {
+            if (p.reqs[k].kind == kind) { n = n + 1; }
+        }
+        return n;
+    }
+
+    // 已经用对的格数（某种材料）
+    public int SatisfiedOf(int i, int kind, VoxelWorld w) {
+        VoxelPlan p = this.At(i);
+        if (p == null) { return 0; }
+        int n = 0;
+        for (int k = 0; k < p.reqs.Length; k = k + 1) {
+            VoxelReq r = p.reqs[k];
+            if (r.kind == kind && w.Get(r.x, r.y, r.z) == kind) { n = n + 1; }
+        }
+        return n;
+    }
+}

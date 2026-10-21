@@ -5,38 +5,39 @@ using System.Json;
 using Game.Foundation;
 using Game.Foundation.Gui;
 
-// 立方世界 · VOXEL 的外壳：存档（最远视距 / 已放置方块数 / 出场次数）
-// + 设置（难度 / 视距 / 自动旋转）+ 设置浮层。
+// 立方世界 · VOXEL 的外壳：存档 + 设置 + 设置浮层。
 //
 // 存档基座（原子写 + 备份回退 + 版本号）与设置逻辑层（档位计算 + 校验 +
 // 落盘）都在公共包 Game.Foundation 里；这里只留"这个游戏存什么、设置有哪
 // 几项"——换个游戏换的正是这两行。
+//
+// 存的四样都是**跨局可见**的成长：累计建成图纸数、累计放置方块数、
+// 最快通关用时、出场次数——菜单与结算面板都直接显示它们。
 public class GameShell {
     GameSaveStore store;
     GameSettings settings;
     SettingsModel model;
     SettingsOverlay overlay;
-    int bestDist;     // 最远视距
-    int bestBlocks;   // 已放置方块数（场景方块数峰值）
-    int runs;         // 出场次数
+    int blueprintsDone;   // 累计建成图纸数
+    int blocksPlaced;     // 累计放置方块数
+    int bestTimeMs;       // 最快通关用时（毫秒，0 = 还没通关过）
+    int runs;             // 出场次数
 
     public GameShell() {
         string dir = GameShell.SaveDir();
         Directory.CreateDirectory(dir);
-        this.store = new GameSaveStore(dir, "voxel", 1);
+        this.store = new GameSaveStore(dir, "voxel", 2);
         this.settings = new GameSettings().At(dir + "/settings.json");
-        // 难度：相机转速（视角转得越快越难驾驭）。
-        this.settings.AddIntChoice("difficulty", "难度", 2,
+        // 难度：建造时限倍率（宽松 / 标准 / 紧张）。
+        this.settings.AddIntChoice("difficulty", "建造时限", 2,
             new List<int> { 1, 2, 3 });
-        // 视距：相机拉远拉近，决定能看到多远。
-        this.settings.AddIntChoice("zoom", "视距", 22,
-            new List<int> { 16, 22, 30 });
-        // 自动旋转：关掉后视角不再自转（骨架阶段唯一的"操作"）。
-        this.settings.AddBool("autoSpin", "自动旋转", true);
+        // 图纸提示：在场景里画出图纸要求的格子。
+        this.settings.AddBool("hint", "图纸提示", true);
         this.settings.Load();
         this.model = new SettingsModel(this.settings);
         this.overlay = new SettingsOverlay(this.model);
         this.overlay.SetTitle("设置");
+        this.overlay.SetCloseText("关闭");
         this.Load();
     }
 
@@ -51,65 +52,73 @@ public class GameShell {
     }
 
     public SettingsOverlay Overlay() { return this.overlay; }
-    public int BestDist() { return this.bestDist; }
-    public int BestBlocks() { return this.bestBlocks; }
+    public int BlueprintsDone() { return this.blueprintsDone; }
+    public int BlocksPlaced() { return this.blocksPlaced; }
+    public int BestTimeMs() { return this.bestTimeMs; }
     public int Runs() { return this.runs; }
 
-    // 难度档（1/2/3）——游戏逻辑读它调相机转速。
+    // 难度档（1/2/3）——时限倍率。
     public int Difficulty() {
         if (this.settings == null) { return 2; }
         return this.settings.GetInt("difficulty");
     }
 
-    // 相机转速（弧度/帧）：难度越高转得越快。
-    public float SpinRate() {
+    public float TimeScale() {
         int level = this.Difficulty();
-        if (level <= 1) { return 0.0018f; }
-        if (level >= 3) { return 0.0060f; }
-        return 0.0035f;
+        if (level <= 1) { return 1.5f; }
+        if (level >= 3) { return 0.7f; }
+        return 1.0f;
     }
 
-    // 视距档（16 / 22 / 30）。
-    public int Zoom() {
-        if (this.settings == null) { return 22; }
-        return this.settings.GetInt("zoom");
-    }
-
-    public bool AutoSpin() {
-        return this.settings != null && this.settings.GetBool("autoSpin");
+    public bool Hint() {
+        if (this.settings == null) { return true; }
+        return this.settings.GetBool("hint");
     }
 
     // 读档：没有存档就用默认值，不报错。
     public void Load() {
         JsonValue data = this.store.Load(0);
         if (data == null) {
-            this.bestDist = 0;
-            this.bestBlocks = 0;
+            this.blueprintsDone = 0;
+            this.blocksPlaced = 0;
+            this.bestTimeMs = 0;
             this.runs = 0;
             return;
         }
-        this.bestDist = data.Int("bestDist", 0);
-        this.bestBlocks = data.Int("bestBlocks", 0);
+        this.blueprintsDone = data.Int("blueprintsDone", 0);
+        this.blocksPlaced = data.Int("blocksPlaced", 0);
+        this.bestTimeMs = data.Int("bestTimeMs", 0);
         this.runs = data.Int("runs", 0);
     }
 
-    // 最远视距只增不减。
-    public void ObserveDist(int d) {
-        if (d > this.bestDist) { this.bestDist = d; }
+    // 记一次建成：图纸数 +1。
+    public void RecordBuild(int blueprints, int placed) {
+        this.blueprintsDone = this.blueprintsDone + blueprints;
+        this.blocksPlaced = this.blocksPlaced + placed;
     }
 
-    // 已放置方块数只增不减。
-    public void ObserveBlocks(int n) {
-        if (n > this.bestBlocks) { this.bestBlocks = n; }
+    // 一局结束时结算本局放置的方块数。
+    public void RecordBlocks(int placed) {
+        if (placed <= 0) { return; }
+        this.blocksPlaced = this.blocksPlaced + placed;
     }
 
-    // 存档：最远视距与已放置方块数只增不减，出场次数 +1。
+    // 通关一次：只记最快用时。
+    public void RecordFinish(int elapsedMs) {
+        if (elapsedMs <= 0) { return; }
+        if (this.bestTimeMs == 0 || elapsedMs < this.bestTimeMs) {
+            this.bestTimeMs = elapsedMs;
+        }
+    }
+
+    // 存档：累计值落盘，出场次数 +1。
     public void Save() {
-        JsonValue data = JsonValue.NewObject();
-        data.PutInt("bestDist", this.bestDist);
-        data.PutInt("bestBlocks", this.bestBlocks);
-        data.PutInt("runs", this.runs + 1);
         this.runs = this.runs + 1;
+        JsonValue data = JsonValue.NewObject();
+        data.PutInt("blueprintsDone", this.blueprintsDone);
+        data.PutInt("blocksPlaced", this.blocksPlaced);
+        data.PutInt("bestTimeMs", this.bestTimeMs);
+        data.PutInt("runs", this.runs);
         this.store.Save(0, data);
     }
 }

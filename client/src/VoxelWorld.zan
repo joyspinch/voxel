@@ -1,0 +1,150 @@
+using System;
+using Game.Kit;
+
+// 三维体素网格：32 × 8 × 32（x 向右、y 向上、z 向里）。
+//
+// 三维数组拍平成一维：index = (z * SizeY + y) * SizeX + x。
+// 存取一律走 Get/Set，越界返回 Air（读）/ false（写），不抛异常——
+// 玩法里"往界外放方块"是要被拒绝的正常路径，不是错误。
+public class VoxelWorld {
+    public const int SizeX = 32;
+    public const int SizeY = 8;
+    public const int SizeZ = 32;
+
+    // 方块类型
+    public const int Air = 0;
+    public const int Grass = 1;
+    public const int Stone = 2;
+    public const int Wood = 3;
+    public const int Ore = 4;
+    public const int KindCount = 5;
+
+    int[] cells;
+    int[] tops;   // 每列最高实心方块的 y+1（0 = 空列）
+
+    public VoxelWorld() {
+        this.cells = new int[VoxelWorld.SizeX * VoxelWorld.SizeY * VoxelWorld.SizeZ];
+        this.tops = new int[VoxelWorld.SizeX * VoxelWorld.SizeZ];
+    }
+
+    public bool InBounds(int x, int y, int z) {
+        if (x < 0 || x >= VoxelWorld.SizeX) { return false; }
+        if (y < 0 || y >= VoxelWorld.SizeY) { return false; }
+        if (z < 0 || z >= VoxelWorld.SizeZ) { return false; }
+        return true;
+    }
+
+    public int Index(int x, int y, int z) {
+        return (z * VoxelWorld.SizeY + y) * VoxelWorld.SizeX + x;
+    }
+
+    public int Get(int x, int y, int z) {
+        if (!this.InBounds(x, y, z)) { return VoxelWorld.Air; }
+        return this.cells[this.Index(x, y, z)];
+    }
+
+    public bool Set(int x, int y, int z, int kind) {
+        if (!this.InBounds(x, y, z)) { return false; }
+        this.cells[this.Index(x, y, z)] = kind;
+        this.RefreshTop(x, z);
+        return true;
+    }
+
+    // 该列最高实心方块的高度（y+1）；空列返回 0。
+    public int ColumnTop(int x, int z) {
+        if (x < 0 || x >= VoxelWorld.SizeX) { return 0; }
+        if (z < 0 || z >= VoxelWorld.SizeZ) { return 0; }
+        return this.tops[z * VoxelWorld.SizeX + x];
+    }
+
+    // 该列在 level 层及以上是否有实心方块（阻挡行走）。
+    public bool SolidAtOrAbove(int x, int z, int level) {
+        if (level < 0) { level = 0; }
+        for (int y = level; y < VoxelWorld.SizeY; y = y + 1) {
+            if (this.Get(x, y, z) != VoxelWorld.Air) { return true; }
+        }
+        return false;
+    }
+
+    // 玩家能不能走进 (x,z)：站在 body 层（脚下的方块是 body-1）。
+    // 上一级台阶可以跨（body+1），往下可以掉（不设限），但两格以上的高墙挡住。
+    public bool CanStepTo(int x, int z, int body) {
+        if (!this.InBounds(x, 0, z)) { return false; }
+        int top = this.ColumnTop(x, z);
+        if (top <= 0) { return false; }
+        if (top > body + 1) { return false; }
+        return true;
+    }
+
+    public int CountOf(int kind) {
+        int n = 0;
+        for (int i = 0; i < this.cells.Length; i = i + 1) {
+            if (this.cells[i] == kind) { n = n + 1; }
+        }
+        return n;
+    }
+
+    void RefreshTop(int x, int z) {
+        int top = 0;
+        for (int y = VoxelWorld.SizeY - 1; y >= 0; y = y - 1) {
+            if (this.cells[this.Index(x, y, z)] != VoxelWorld.Air) {
+                top = y + 1;
+                break;
+            }
+        }
+        this.tops[z * VoxelWorld.SizeX + x] = top;
+    }
+
+    // 地形：起伏的草皮台地 + 零星石头/矿 + 树；工地与出生点推平，
+    // 图纸才能从零建起，角色也才有落脚的高差。
+    public void Generate(Rng rng) {
+        for (int z = 0; z < VoxelWorld.SizeZ; z = z + 1) {
+            for (int x = 0; x < VoxelWorld.SizeX; x = x + 1) {
+                double wave = (double)Math.Sin((double)x * 0.31) * 1.15
+                    + (double)Math.Cos((double)z * 0.23) * 0.95
+                    + (double)Math.Sin((double)(x * 2 + z) * 0.17) * 0.45;
+                int levels = (int)(wave + 1.9);
+                if (levels < 1) { levels = 1; }
+                if (levels > 4) { levels = 4; }
+                if (this.IsFlatArea(x, z)) { levels = 1; }
+                for (int y = 0; y < levels; y = y + 1) {
+                    int kind = VoxelWorld.Grass;
+                    if (y == levels - 1) {
+                        int r = rng.Range(0, 100);
+                        if (r < 7) { kind = VoxelWorld.Stone; }
+                        else if (r < 11) { kind = VoxelWorld.Ore; }
+                    }
+                    this.Set(x, y, z, kind);
+                }
+            }
+        }
+        // 树：树干（木）两层 + 草顶树冠，避开工地。
+        for (int i = 0; i < 26; i = i + 1) {
+            int x = rng.Range(1, VoxelWorld.SizeX - 2);
+            int z = rng.Range(1, VoxelWorld.SizeZ - 2);
+            if (this.IsFlatArea(x, z)) { continue; }
+            int trunk = this.ColumnTop(x, z);
+            if (trunk < 1) { continue; }
+            if (trunk + 3 >= VoxelWorld.SizeY) { continue; }
+            this.Set(x, trunk, z, VoxelWorld.Wood);
+            this.Set(x, trunk + 1, z, VoxelWorld.Wood);
+            this.Set(x, trunk + 2, z, VoxelWorld.Grass);
+            this.Set(x - 1, trunk + 2, z, VoxelWorld.Grass);
+            this.Set(x + 1, trunk + 2, z, VoxelWorld.Grass);
+            this.Set(x, trunk + 2, z - 1, VoxelWorld.Grass);
+            this.Set(x, trunk + 2, z + 1, VoxelWorld.Grass);
+        }
+    }
+
+    // 工地：图纸所在的方形区域，必须是平地。
+    public bool IsBuildSite(int x, int z) {
+        return x >= 12 && x <= 20 && z >= 12 && z <= 20;
+    }
+
+    // 工地 + 出生平台：这两块必须是平地，其余地方随地形起伏。
+    public bool IsFlatArea(int x, int z) {
+        if (this.IsBuildSite(x, z)) { return true; }
+        if (x >= 14 && x <= 18 && z >= 9 && z <= 11) { return true; }
+        return false;
+    }
+}

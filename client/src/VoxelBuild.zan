@@ -1,0 +1,83 @@
+using System;
+using Game.Kit;
+
+// 放置 / 破坏 / 背包资源。
+//
+// 规则：
+//   - 放置：格子必须在界内、必须是空的、背包里该材料还有存货。
+//   - 破坏：格子必须非空；草/石/木回收 1 个同类型资源（"少量回收"），
+//     **矿灯不可回收**——矿灯是整局最稀缺的材料，拆了就白拆。
+public class VoxelBuild {
+    public VoxelWorld world;
+    public int[] stock;
+    public int placedCount;
+    public int brokenCount;
+
+    public VoxelBuild(VoxelWorld w) {
+        this.world = w;
+        this.stock = new int[VoxelWorld.KindCount];
+        for (int i = 0; i < VoxelWorld.KindCount; i = i + 1) {
+            this.stock[i] = 0;
+        }
+        this.placedCount = 0;
+        this.brokenCount = 0;
+    }
+
+    public void SetStock(int kind, int n) {
+        if (kind < 0 || kind >= VoxelWorld.KindCount) { return; }
+        this.stock[kind] = n;
+    }
+
+    public int Stock(int kind) {
+        if (kind < 0 || kind >= VoxelWorld.KindCount) { return 0; }
+        return this.stock[kind];
+    }
+
+    public bool CanPlace(int x, int y, int z, int kind) {
+        if (kind <= VoxelWorld.Air || kind >= VoxelWorld.KindCount) { return false; }
+        if (!this.world.InBounds(x, y, z)) { return false; }
+        if (this.world.Get(x, y, z) != VoxelWorld.Air) { return false; }
+        if (this.stock[kind] <= 0) { return false; }
+        return true;
+    }
+
+    public bool Place(int x, int y, int z, int kind) {
+        if (!this.CanPlace(x, y, z, kind)) { return false; }
+        this.world.Set(x, y, z, kind);
+        this.stock[kind] = this.stock[kind] - 1;
+        this.placedCount = this.placedCount + 1;
+        return true;
+    }
+
+    public bool Break(int x, int y, int z) {
+        if (!this.world.InBounds(x, y, z)) { return false; }
+        int kind = this.world.Get(x, y, z);
+        if (kind == VoxelWorld.Air) { return false; }
+        this.world.Set(x, y, z, VoxelWorld.Air);
+        this.brokenCount = this.brokenCount + 1;
+        if (kind != VoxelWorld.Ore) {
+            this.stock[kind] = this.stock[kind] + 1;
+        }
+        return true;
+    }
+
+    // 该材料还能不能捡回来（矿灯不行）。
+    public static bool Recoverable(int kind) {
+        return kind != VoxelWorld.Ore && kind > VoxelWorld.Air
+            && kind < VoxelWorld.KindCount;
+    }
+
+    // 背包还够不够把当前图纸建完——不够就是"资源耗尽"，判失败。
+    // 口径：每种材料的缺口（图纸要的 − 已经建对的）不能超过库存。
+    public bool CanStillComplete(VoxelPlans plans, int planIndex) {
+        if (plans == null) { return true; }
+        for (int kind = 1; kind < VoxelWorld.KindCount; kind = kind + 1) {
+            int need = plans.NeedOf(planIndex, kind);
+            if (need <= 0) { continue; }
+            int done = plans.SatisfiedOf(planIndex, kind, this.world);
+            int remaining = need - done;
+            if (this.stock[kind] < remaining) { return false; }
+        }
+        return true;
+    }
+}

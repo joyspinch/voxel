@@ -1,0 +1,362 @@
+using System;
+using System.Collections.Generic;
+using Game.Kit;
+
+// 立方世界 · VOXEL 的玩法无头用例：
+//   三维网格存取 / 放置与破坏规则 / 背包资源 / 图纸判定与逐张解锁 /
+//   等距投影 / 行走阻挡 / 三种子跑完整局。
+//
+// 判据：全部断言通过则打印 "voxel_test OK"。
+public class VoxelTest {
+    static int failures = 0;
+    static int checks = 0;
+
+    static void Ok(bool cond, string label) {
+        checks = checks + 1;
+        if (!cond) {
+            failures = failures + 1;
+            Console.WriteLine("FAIL " + label);
+        }
+    }
+
+    static void Eq(int got, int want, string label) {
+        Ok(got == want, label + " got=" + Convert.ToString(got)
+            + " want=" + Convert.ToString(want));
+    }
+
+    static void EqS(string got, string want, string label) {
+        Ok(got == want, label + " got=" + got + " want=" + want);
+    }
+
+    // ----- 一、三维网格存取 -------------------------------------------------
+
+    static void TestWorldStorage() {
+        VoxelWorld w = new VoxelWorld();
+        Eq(w.Get(0, 0, 0), VoxelWorld.Air, "空网格读到的是空气");
+        Ok(w.Set(3, 2, 5, VoxelWorld.Stone), "合法坐标写得进去");
+        Eq(w.Get(3, 2, 5), VoxelWorld.Stone, "写进去读得回来");
+        Eq(w.Index(3, 2, 5), (5 * VoxelWorld.SizeY + 2) * VoxelWorld.SizeX + 3,
+            "三维索引公式");
+        // 三个不同格互不串味
+        w.Set(1, 0, 1, VoxelWorld.Grass);
+        w.Set(2, 0, 1, VoxelWorld.Wood);
+        w.Set(1, 0, 2, VoxelWorld.Ore);
+        Eq(w.Get(1, 0, 1), VoxelWorld.Grass, "格 A 仍是草");
+        Eq(w.Get(2, 0, 1), VoxelWorld.Wood, "格 B 仍是木");
+        Eq(w.Get(1, 0, 2), VoxelWorld.Ore, "格 C 仍是矿");
+        // 越界读 = 空气
+        Eq(w.Get(-1, 0, 0), VoxelWorld.Air, "x 越界读是空气");
+        Eq(w.Get(VoxelWorld.SizeX, 0, 0), VoxelWorld.Air, "x 上界读是空气");
+        Eq(w.Get(0, -1, 0), VoxelWorld.Air, "y 越界读是空气");
+        Eq(w.Get(0, VoxelWorld.SizeY, 0), VoxelWorld.Air, "y 上界读是空气");
+        Eq(w.Get(0, 0, -1), VoxelWorld.Air, "z 越界读是空气");
+        Eq(w.Get(0, 0, VoxelWorld.SizeZ), VoxelWorld.Air, "z 上界读是空气");
+        // 越界写 = 拒绝
+        Ok(!w.Set(-1, 0, 0, VoxelWorld.Stone), "x 越界写被拒");
+        Ok(!w.Set(VoxelWorld.SizeX, 0, 0, VoxelWorld.Stone), "x 上界写被拒");
+        Ok(!w.Set(0, -1, 0, VoxelWorld.Stone), "y 越界写被拒");
+        Ok(!w.Set(0, VoxelWorld.SizeY, 0, VoxelWorld.Stone), "y 上界写被拒");
+        Ok(!w.Set(0, 0, -1, VoxelWorld.Stone), "z 越界写被拒");
+        Ok(!w.Set(0, 0, VoxelWorld.SizeZ, VoxelWorld.Stone), "z 上界写被拒");
+        Eq(w.CountOf(VoxelWorld.Stone), 1, "石头计数");
+        Eq(w.CountOf(VoxelWorld.Ore), 1, "矿灯计数");
+        // 列高
+        w.Set(4, 0, 4, VoxelWorld.Grass);
+        w.Set(4, 1, 4, VoxelWorld.Wood);
+        Eq(w.ColumnTop(4, 4), 2, "列高是最高实心块 +1");
+        w.Set(4, 1, 4, VoxelWorld.Air);
+        Eq(w.ColumnTop(4, 4), 1, "拆掉一层列高回落");
+    }
+
+    // ----- 二、放置 / 破坏 / 资源 -------------------------------------------
+
+    static VoxelBuild MakeBuild() {
+        VoxelWorld w = new VoxelWorld();
+        VoxelBuild b = new VoxelBuild(w);
+        b.SetStock(VoxelWorld.Grass, 6);
+        b.SetStock(VoxelWorld.Stone, 11);
+        b.SetStock(VoxelWorld.Wood, 12);
+        b.SetStock(VoxelWorld.Ore, 7);
+        return b;
+    }
+
+    static void TestPlaceAndBreak() {
+        VoxelBuild b = MakeBuild();
+        // 坐标越界拒绝放置
+        Ok(!b.CanPlace(-1, 1, 0, VoxelWorld.Stone), "x 越界不能放");
+        Ok(!b.CanPlace(VoxelWorld.SizeX, 1, 0, VoxelWorld.Stone), "x 上界不能放");
+        Ok(!b.CanPlace(0, -1, 0, VoxelWorld.Stone), "y 越界不能放");
+        Ok(!b.CanPlace(0, VoxelWorld.SizeY, 0, VoxelWorld.Stone), "y 上界不能放");
+        Ok(!b.CanPlace(0, 1, -1, VoxelWorld.Stone), "z 越界不能放");
+        Ok(!b.CanPlace(0, 1, VoxelWorld.SizeZ, VoxelWorld.Stone), "z 上界不能放");
+        Ok(!b.CanPlace(0, 1, 0, VoxelWorld.Air), "空气不是材料");
+        Ok(!b.CanPlace(0, 1, 0, VoxelWorld.KindCount), "越界材料类型被拒");
+        // 正常放置
+        int stone0 = b.Stock(VoxelWorld.Stone);
+        Ok(b.CanPlace(0, 1, 0, VoxelWorld.Stone), "合法格可以放");
+        Ok(b.Place(0, 1, 0, VoxelWorld.Stone), "放置成功");
+        Eq(b.world.Get(0, 1, 0), VoxelWorld.Stone, "放置后格子类型变了");
+        Eq(b.Stock(VoxelWorld.Stone), stone0 - 1, "放置后资源减少了");
+        Eq(b.placedCount, 1, "放置计数 +1");
+        // 占位不能再放
+        Ok(!b.CanPlace(0, 1, 0, VoxelWorld.Stone), "占了的格子不能放");
+        Ok(!b.Place(0, 1, 0, VoxelWorld.Stone), "占了的格子放不进");
+        Eq(b.Stock(VoxelWorld.Stone), stone0 - 1, "放失败不扣资源");
+        // 越界放置不扣资源
+        Ok(!b.Place(-5, 1, 0, VoxelWorld.Stone), "越界放置失败");
+        Eq(b.Stock(VoxelWorld.Stone), stone0 - 1, "越界放置不扣资源");
+        // 库存为 0 不能放
+        b.SetStock(VoxelWorld.Wood, 0);
+        Ok(!b.CanPlace(2, 1, 2, VoxelWorld.Wood), "没材料不能放");
+        Ok(!b.Place(2, 1, 2, VoxelWorld.Wood), "没材料放不进");
+        Eq(b.Stock(VoxelWorld.Wood), 0, "没材料时库存不欠账");
+        // 破坏回收资源
+        int grass0 = b.Stock(VoxelWorld.Grass);
+        b.SetStock(VoxelWorld.Grass, 3);
+        b.Place(3, 1, 3, VoxelWorld.Grass);
+        Eq(b.Stock(VoxelWorld.Grass), 2, "放草后草 -1");
+        Ok(b.Break(3, 1, 3), "破坏成功");
+        Eq(b.world.Get(3, 1, 3), VoxelWorld.Air, "破坏后格子空了");
+        Eq(b.Stock(VoxelWorld.Grass), 3, "破坏回收了资源");
+        Eq(b.brokenCount, 1, "破坏计数 +1");
+        Ok(grass0 >= 0, "库存非负");
+        // 矿灯不可回收
+        int ore0 = b.Stock(VoxelWorld.Ore);
+        b.Place(4, 1, 4, VoxelWorld.Ore);
+        Eq(b.Stock(VoxelWorld.Ore), ore0 - 1, "放矿灯后矿 -1");
+        Ok(b.Break(4, 1, 4), "矿灯也能拆");
+        Eq(b.Stock(VoxelWorld.Ore), ore0 - 1, "矿灯拆了不回收");
+        Ok(!VoxelBuild.Recoverable(VoxelWorld.Ore), "矿灯不可回收");
+        Ok(VoxelBuild.Recoverable(VoxelWorld.Stone), "石头可回收");
+        // 拆空格 / 越界
+        Ok(!b.Break(9, 9, 9), "拆空格失败");
+        Ok(!b.Break(-1, 1, 0), "越界拆失败");
+    }
+
+    // ----- 三、图纸判定与逐张解锁 -------------------------------------------
+
+    static void TestBlueprintJudge() {
+        VoxelWorld w = new VoxelWorld();
+        VoxelBuild b = MakeBuild();
+        VoxelPlans plans = new VoxelPlans();
+        Eq(plans.Count(), 3, "一共三张图纸");
+        VoxelPlan p0 = plans.At(0);
+        Ok(p0 != null && p0.reqs.Length == 9, "图纸一是 3×3 共 9 格");
+        Ok(plans.At(-1) == null, "越界图纸取不到");
+        Ok(plans.At(99) == null, "越界图纸取不到");
+        Eq(plans.Progress(0, w), 0, "开局进度为 0");
+        Ok(!plans.Complete(0, w), "开局没建成");
+        // 位置对、类型错 → 不算
+        VoxelReq r0 = p0.reqs[0];
+        w.Set(r0.x, r0.y, r0.z, VoxelWorld.Wood);
+        Eq(plans.Progress(0, w), 0, "类型不对不计进度");
+        Ok(!plans.Complete(0, w), "类型不对不算建成");
+        // 类型对、位置错 → 不算
+        w.Set(r0.x, r0.y, r0.z, VoxelWorld.Air);
+        w.Set(r0.x + 5, r0.y, r0.z, VoxelWorld.Stone);
+        Eq(plans.Progress(0, w), 0, "位置不对不计进度");
+        // 全对 → 建成
+        for (int i = 0; i < p0.reqs.Length; i = i + 1) {
+            VoxelReq r = p0.reqs[i];
+            w.Set(r.x, r.y, r.z, r.kind);
+        }
+        Eq(plans.Progress(0, w), 9, "全对进度满");
+        Ok(plans.Complete(0, w), "全对算建成");
+        Eq(plans.NeedOf(0, VoxelWorld.Stone), 9, "图纸一要 9 石");
+        Eq(plans.SatisfiedOf(0, VoxelWorld.Stone, w), 9, "9 石都对上了");
+        Eq(plans.NeedOf(1, VoxelWorld.Ore), 1, "图纸二要 1 盏矿灯");
+        Eq(plans.NeedOf(2, VoxelWorld.Wood), 8, "图纸三要 8 木");
+        Eq(plans.NeedOf(2, VoxelWorld.Grass), 4, "图纸三要 4 草");
+        // 逐张解锁：图纸二在图纸一没建好时不算数
+        VoxelPlan p1 = plans.At(1);
+        Ok(p1 != null, "图纸二取得到");
+        if (p1 != null) {
+            for (int i = 0; i < p1.reqs.Length; i = i + 1) {
+                VoxelReq r = p1.reqs[i];
+                w.Set(r.x, r.y, r.z, r.kind);
+            }
+        }
+        Ok(plans.Complete(1, w), "图纸二单独看是建好的");
+        Ok(!plans.Complete(2, w), "图纸三还没建");
+        // 资源耗尽 → 失败
+        VoxelBuild b2 = MakeBuild();
+        b2.SetStock(VoxelWorld.Stone, 3);
+        Ok(!b2.CanStillComplete(plans, 0), "石头不够就判失败");
+        b2.SetStock(VoxelWorld.Stone, 11);
+        Ok(b2.CanStillComplete(plans, 0), "材料够就不算失败");
+        // 建对 9 格之后缺口为 0，库存 0 也不算失败
+        VoxelBuild b3 = MakeBuild();
+        b3.SetStock(VoxelWorld.Stone, 0);
+        VoxelPlan p3 = b3.world == null ? null : plans.At(0);
+        Ok(p3 != null, "图纸一取得到");
+        if (p3 != null) {
+            for (int i = 0; i < p3.reqs.Length; i = i + 1) {
+                VoxelReq r = p3.reqs[i];
+                b3.world.Set(r.x, r.y, r.z, r.kind);
+            }
+        }
+        Ok(b3.CanStillComplete(plans, 0), "格子都建好了就不再缺材料");
+    }
+
+    // ----- 四、等距投影 -----------------------------------------------------
+
+    static void TestIso() {
+        VoxelIso iso = new VoxelIso();
+        iso.originX = 0;
+        iso.originY = 0;
+        Eq(iso.SX(0, 0), 0, "原点投影 x 为 0");
+        Eq(iso.SX(1, 0), VoxelIso.TW / 2, "x+1 右移半格宽");
+        Eq(iso.SX(2, 0), VoxelIso.TW, "x+2 右移一格宽");
+        Eq(iso.SX(0, 1), -VoxelIso.TW / 2, "z+1 左移半格宽");
+        Ok(iso.SX(0, 0) > iso.SX(0, 1), "z 增大往左");
+        // x 单调右移
+        bool mono = true;
+        for (int x = 0; x < 12; x = x + 1) {
+            if (iso.SX(x + 1, 7) <= iso.SX(x, 7)) { mono = false; }
+        }
+        Ok(mono, "投影坐标随 x 单调右移");
+        // x+z 越大越靠下
+        Ok(iso.SY(1, 0, 0) > iso.SY(0, 0, 0), "x 增大往下");
+        Ok(iso.SY(0, 1, 0) > iso.SY(0, 0, 0), "z 增大往下");
+        Eq(iso.SY(0, 0, 1), -VoxelIso.LEVEL, "y 抬一层就上移一层高");
+        Eq(iso.SY(0, 0, 2), -VoxelIso.LEVEL * 2, "y 抬两层");
+        // 贴图左上角
+        Eq(iso.BlockLeft(3, 4), iso.SX(3, 4) - VoxelIso.TW / 2, "贴图左边缘");
+        Eq(iso.BlockTop(3, 4, 1), iso.SY(3, 4, 1) - VoxelIso.TH / 2, "贴图上边缘");
+        // 相机跟随：玩家居中
+        iso.Follow(10, 10, 1280, 800);
+        int cx = iso.SX(10, 10);
+        Ok(cx > 1280 / 2 - VoxelIso.TW && cx < 1280 / 2 + VoxelIso.TW,
+            "相机跟随后玩家横向居中");
+    }
+
+    // ----- 五、行走阻挡 -----------------------------------------------------
+
+    static void TestWalkRules() {
+        VoxelWorld w = new VoxelWorld();
+        for (int z = 0; z < VoxelWorld.SizeZ; z = z + 1) {
+            for (int x = 0; x < VoxelWorld.SizeX; x = x + 1) {
+                w.Set(x, 0, z, VoxelWorld.Grass);
+            }
+        }
+        Ok(w.CanStepTo(5, 5, 1), "空地可以走");
+        Ok(!w.CanStepTo(-1, 5, 1), "越界走不了");
+        Ok(!w.CanStepTo(VoxelWorld.SizeX, 5, 1), "越界走不了");
+        Ok(!w.CanStepTo(5, -1, 1), "越界走不了");
+        // 一格高的方块：能踩上去
+        w.Set(6, 1, 5, VoxelWorld.Stone);
+        Ok(w.CanStepTo(6, 5, 1), "一格高的方块能跨上去");
+        Eq(w.ColumnTop(6, 5), 2, "踩上去后身体层是 2");
+        // 两格高的墙：挡住站在地面上的玩家
+        w.Set(7, 1, 5, VoxelWorld.Stone);
+        w.Set(7, 2, 5, VoxelWorld.Stone);
+        Ok(!w.CanStepTo(7, 5, 1), "两格高的墙挡住玩家");
+        Ok(w.CanStepTo(7, 5, 2), "已经站到一格高时能再上一格");
+        // 从高处往下走是允许的
+        Ok(w.CanStepTo(6, 5, 3), "往下走允许");
+        // 挖掉阻挡物就能走了
+        w.Set(7, 1, 5, VoxelWorld.Air);
+        w.Set(7, 2, 5, VoxelWorld.Air);
+        Ok(w.CanStepTo(7, 5, 1), "拆掉墙就能走");
+    }
+
+    // ----- 六、三个种子跑完整局 ---------------------------------------------
+
+    // 自动建造：按图纸逐格放置（走位用"直接落位"简化，规则接口与游戏一致）。
+    static int BuildAll(VoxelPlans plans, VoxelBuild b, int planIndex) {
+        VoxelPlan p = plans.At(planIndex);
+        if (p == null) { return 0; }
+        int placed = 0;
+        for (int i = 0; i < p.reqs.Length; i = i + 1) {
+            VoxelReq r = p.reqs[i];
+            if (b.world.Get(r.x, r.y, r.z) == r.kind) { continue; }
+            if (!b.CanPlace(r.x, r.y, r.z, r.kind)) { return -1; }
+            b.Place(r.x, r.y, r.z, r.kind);
+            placed = placed + 1;
+        }
+        return placed;
+    }
+
+    static void TestSeededRuns() {
+        long[] seeds = new long[] { 20261021L, 777777L, 424242L };
+        for (int s = 0; s < seeds.Length; s = s + 1) {
+            Rng rng = Rng.Seed(seeds[s]);
+            VoxelWorld w = new VoxelWorld();
+            w.Generate(rng);
+            VoxelBuild b = new VoxelBuild(w);
+            b.SetStock(VoxelWorld.Grass, 6);
+            b.SetStock(VoxelWorld.Stone, 11);
+            b.SetStock(VoxelWorld.Wood, 12);
+            b.SetStock(VoxelWorld.Ore, 7);
+            VoxelPlans plans = new VoxelPlans();
+            Ok(b.CanStillComplete(plans, 0), "种子开局材料够图纸一");
+            Ok(b.CanStillComplete(plans, 1), "种子开局材料够图纸二");
+            Ok(b.CanStillComplete(plans, 2), "种子开局材料够图纸三");
+            // 逐张建
+            int planIndex = 0;
+            int guard = 0;
+            while (planIndex < plans.Count() && guard < 50) {
+                int progressBefore = plans.Progress(planIndex, w);
+                int placed = BuildAll(plans, b, planIndex);
+                Ok(placed >= 0, "种子" + Convert.ToString(seeds[s])
+                    + " 图纸" + Convert.ToString(planIndex + 1) + " 放得下");
+                int progressAfter = plans.Progress(planIndex, w);
+                VoxelPlan cur = plans.At(planIndex);
+                Ok(cur != null, "当前图纸取得到");
+                Ok(progressAfter >= progressBefore, "进度只增不减");
+                Ok(cur != null && progressAfter == cur.reqs.Length,
+                    "图纸" + Convert.ToString(planIndex + 1) + " 建成");
+                Ok(plans.Complete(planIndex, w),
+                    "图纸" + Convert.ToString(planIndex + 1) + " 判定为完成");
+                planIndex = planIndex + 1;
+                guard = guard + 1;
+            }
+            Eq(planIndex, plans.Count(), "三张图纸全部走完");
+            // 库存自洽：没有负数，矿灯用光
+            for (int k = 1; k < VoxelWorld.KindCount; k = k + 1) {
+                Ok(b.Stock(k) >= 0, "库存不为负");
+            }
+            Eq(b.Stock(VoxelWorld.Ore), 7 - 5, "矿灯刚好用完 5 盏");
+            // 世界自洽：图纸要求的格子都在，工地之外的地面没被动过
+            for (int i = 0; i < plans.Count(); i = i + 1) {
+                VoxelPlan p = plans.At(i);
+                if (p == null) { continue; }
+                for (int k = 0; k < p.reqs.Length; k = k + 1) {
+                    VoxelReq r = p.reqs[k];
+                    Eq(w.Get(r.x, r.y, r.z), r.kind,
+                        "图纸" + Convert.ToString(i + 1) + " 第" + Convert.ToString(k)
+                        + " 格类型正确");
+                }
+            }
+            // 地形还在：地面没有被误改
+            Ok(w.CountOf(VoxelWorld.Grass) > 100, "草地还在");
+            Ok(w.CountOf(VoxelWorld.Wood) > 0, "树还在");
+        }
+    }
+
+    // ----- 七、时间格式化 ---------------------------------------------------
+
+    static void TestFormat() {
+        EqS(VoxelPaint.FmtTime(0), "0:00", "0 毫秒");
+        EqS(VoxelPaint.FmtTime(65000), "1:05", "1 分 05 秒");
+        EqS(VoxelPaint.FmtTime(600000), "10:00", "10 分钟");
+        EqS(VoxelPaint.FmtTime(-5), "0:00", "负数夹到 0");
+    }
+
+    static void Main() {
+        TestWorldStorage();
+        TestPlaceAndBreak();
+        TestBlueprintJudge();
+        TestIso();
+        TestWalkRules();
+        TestSeededRuns();
+        TestFormat();
+        Console.WriteLine("voxel_test checks=" + Convert.ToString(checks)
+            + " failures=" + Convert.ToString(failures));
+        if (failures > 0) {
+            Console.WriteLine("voxel_test FAILED");
+            return;
+        }
+        Console.WriteLine("voxel_test OK");
+    }
+}

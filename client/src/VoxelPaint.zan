@@ -1,0 +1,99 @@
+using System;
+using Gui;
+using Game.Kit;
+
+// 逻辑坐标下的画布原语：把 CDraw 的视口映射包一层，
+// 全部布局写在逻辑像素里（1280×800 设计分辨率）。
+public class VoxelPaint {
+    public static int X(int v) { return CDraw.MapX(v + CDraw.originX); }
+    public static int Y(int v) { return CDraw.MapY(v + CDraw.originY); }
+    public static int S(int v) { return CDraw.MapW(v); }
+
+    public static void Fill(Canvas c, int x, int y, int w, int h, int color) {
+        if (w <= 0 || h <= 0) { return; }
+        c.FillRect(X(x), Y(y), S(w), S(h), color);
+    }
+
+    public static void FillVGrad(Canvas c, int x, int y, int w, int h,
+                                int top, int bottom) {
+        if (w <= 0 || h <= 0) { return; }
+        c.FillVGrad(X(x), Y(y), S(w), S(h), top, bottom);
+    }
+
+    public static void FillRound(Canvas c, int x, int y, int w, int h,
+                                 int rad, int color) {
+        if (w <= 0 || h <= 0) { return; }
+        c.FillRoundRect(X(x), Y(y), S(w), S(h), S(rad), color);
+    }
+
+    public static void Round(Canvas c, int x, int y, int w, int h, int rad,
+                             int color, int t) {
+        if (w <= 0 || h <= 0 || t <= 0) { return; }
+        c.DrawRoundRect(X(x), Y(y), S(w), S(h), S(rad), color, S(t));
+    }
+
+    public static void Rect(Canvas c, int x, int y, int w, int h, int color, int t) {
+        if (w <= 0 || h <= 0 || t <= 0) { return; }
+        c.DrawRect(X(x), Y(y), S(w), S(h), color, S(t));
+    }
+
+    public static void Line(Canvas c, int x0, int y0, int x1, int y1,
+                            int color, int t) {
+        if (t <= 0) { return; }
+        c.DrawLine(X(x0), Y(y0), X(x1), Y(y1), color, S(t));
+    }
+
+    public static void Text(Canvas c, string text, int x, int y, int size, int color) {
+        if (text == null || text == "") { return; }
+        c.DrawText(X(x), Y(y), text, color, S(size));
+    }
+
+    public static void TextCentered(Canvas c, string text, int cx, int y,
+                                     int boxW, int size, int color) {
+        if (text == null || text == "") { return; }
+        int tw = Canvas.MeasureText(text, S(size));
+        c.DrawText(X(cx - tw / 2), Y(y), text, color, S(size));
+    }
+
+    // 等距菱形轮廓（放置光标 / 图纸提示）。cx/cy 是菱形中心（逻辑坐标）。
+    public static void Diamond(Canvas c, int cx, int cy, int hw, int hh,
+                               int color, int t) {
+        VoxelPaint.Line(c, cx - hw, cy, cx, cy - hh, color, t);
+        VoxelPaint.Line(c, cx, cy - hh, cx + hw, cy, color, t);
+        VoxelPaint.Line(c, cx + hw, cy, cx, cy + hh, color, t);
+        VoxelPaint.Line(c, cx, cy + hh, cx - hw, cy, color, t);
+    }
+
+    // 菱形实心（半透明用颜色自带的 alpha）。
+    public static void DiamondFill(Canvas c, int cx, int cy, int hw, int hh,
+                                   int color) {
+        int steps = hh;
+        for (int i = 0; i <= steps; i = i + 1) {
+            int t = i * hw / steps;
+            VoxelPaint.Fill(c, cx - t, cy - hh + i, t * 2 + 1, 1, color);
+        }
+    }
+
+    // 毫秒 → "mm:ss"
+    public static string FmtTime(int ms) {
+        if (ms < 0) { ms = 0; }
+        int total = ms / 1000;
+        int m = total / 60;
+        int s = total % 60;
+        string mm = Convert.ToString(m);
+        string ss = Convert.ToString(s);
+        if (s < 10) { ss = "0" + ss; }
+        return mm + ":" + ss;
+    }
+
+    // 毫秒 → "m'ss.ms"（结算面板用，精确到 0.1 秒）
+    public static string FmtTimeFine(int ms) {
+        if (ms < 0) { ms = 0; }
+        int total = ms / 1000;
+        int m = total / 60;
+        int s = total % 60;
+        int d = (ms % 1000) / 100;
+        return Convert.ToString(m) + "'" + Convert.ToString(s) + "."
+            + Convert.ToString(d) + "s";
+    }
+}

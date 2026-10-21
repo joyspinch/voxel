@@ -1,0 +1,557 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+using Game.Kit;
+using Game.Foundation;
+using Game.Foundation.Gui;
+
+// 一个可点的动作按钮。
+public class VoxelButton {
+    public string label;
+    public int kind;      // 0=普通 1=强调
+    public int x;
+    public int y;
+    public int w;
+    public int h;
+    public bool enabled;
+
+    public VoxelButton(string label, int kind, int x, int y, int w, int h,
+                        bool enabled) {
+        this.label = label;
+        this.kind = kind;
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.enabled = enabled;
+    }
+}
+
+// 立方世界 · VOXEL 的应用状态机：菜单 → 建造 → 结算。
+//
+// 玩法闭环：按图纸把方块一块块垒起来 —— 面朝方向决定"相邻格"，
+// 建造高度决定垒到第几层，放置/破坏即时改写三维网格并扣/还背包资源；
+// 每张图纸的格子全部"类型与位置都对"才算建成 → 解锁下一张；
+// 资源不够或超时 → 结算面板给出完成张数与用时。
+public class VoxelGame : IGuiHostLoop {
+    public GuiHost host;
+    public GameShell shell;
+    public VoxelView view;
+    public VoxelSfx sfx;
+    public VoxelPlans plans;
+    public VoxelWorld world;
+    public VoxelBuild build;
+    public VoxelIso iso;
+    public List<VoxelButton> buttons;
+
+    public int screen;          // 0=菜单 1=建造 2=结算
+    public int playerX;
+    public int playerZ;
+    public int playerBody;      // 玩家身体所在层（站在 y=0 地面上时为 1）
+    public int facing;          // 0=+x 1=-x 2=+z 3=-z
+    public int cursorOffset;    // 建造高度相对玩家所处层
+    public int selected;        // 当前材料
+    public int planIndex;       // 当前图纸
+    public int elapsedMs;
+    public int planElapsedMs;
+    public int placedTotal;
+    public int runPlaced;
+    public int frames;
+    public bool failed;
+    public string failReason;
+    public long lastSeq;
+    public int lastButton;
+    public int moveTimer;
+    bool[] keys = new bool[256];
+    bool smokeMode;
+    bool autoStart;
+    int smokeFrames;
+    bool autoBuild;
+    string capturePath;
+    int captureFrame;
+    bool finished;
+    bool runEnded;
+    bool blocked;
+
+    public VoxelGame() {
+        this.buttons = new List<VoxelButton>();
+        this.shell = new GameShell();
+        this.view = new VoxelView();
+        this.sfx = new VoxelSfx();
+        this.plans = new VoxelPlans();
+        this.world = new VoxelWorld();
+        this.build = new VoxelBuild(this.world);
+        this.iso = new VoxelIso();
+        this.screen = 0;
+        this.smokeMode = Environment.GetEnvironmentVariable("VOXEL_SMOKE") == "1";
+        this.autoBuild = Environment.GetEnvironmentVariable("VOXEL_AUTOBUILD") == "1";
+        // 截图/演示用：直接进工地（配 VOXEL_AUTOBUILD=1 会自动把图纸盖起来）。
+        this.autoStart = Environment.GetEnvironmentVariable("VOXEL_AUTOSTART") == "1";
+        this.capturePath = Environment.GetEnvironmentVariable("VOXEL_CAPTURE");
+        this.captureFrame = 60;
+        string framesEnv = Environment.GetEnvironmentVariable("VOXEL_FRAMES");
+        this.smokeFrames = 90;
+        if (framesEnv != "") { this.smokeFrames = Convert.ToInt32(framesEnv); }
+        this.view.LoadAssets();
+        this.ResetRun(Rng.Seed(20261021L + (long)Window.GetTickMs()));
+    }
+
+    // 开一局：重置世界、库存、图纸进度与计时。
+    public void ResetRun(Rng rng) {
+        this.world = new VoxelWorld();
+        this.world.Generate(rng);
+        this.build = new VoxelBuild(this.world);
+        this.build.SetStock(VoxelWorld.Grass, 6);
+        this.build.SetStock(VoxelWorld.Stone, 11);
+        this.build.SetStock(VoxelWorld.Wood, 12);
+        this.build.SetStock(VoxelWorld.Ore, 7);
+        this.playerX = 16;
+        this.playerZ = 10;
+        this.playerBody = 1;
+        this.cursorOffset = 0;
+        this.selected = VoxelWorld.Grass;
+        this.facing = 2;
+        this.planIndex = 0;
+        this.elapsedMs = 0;
+        this.planElapsedMs = 0;
+        this.placedTotal = 0;
+        this.runPlaced = 0;
+        this.runPlaced = 0;
+        this.runEnded = false;
+        this.failed = false;
+        this.failReason = "";
+        this.ClearAround(this.playerX, this.playerZ, 1);
+    }
+
+    // 清出一小块空地（出生点不能有树）。
+    void ClearAround(int x, int z, int r) {
+        for (int dz = -r; dz <= r; dz = dz + 1) {
+            for (int dx = -r; dx <= r; dx = dx + 1) {
+                int cx = x + dx;
+                int cz = z + dz;
+                if (!this.world.InBounds(cx, 0, cz)) { continue; }
+                for (int y = 1; y < VoxelWorld.SizeY; y = y + 1) {
+                    this.world.Set(cx, y, cz, VoxelWorld.Air);
+                }
+            }
+        }
+    }
+
+    // ----- 派生状态 -----------------------------------------------------
+
+    public int cursorY() {
+        int y = this.playerBody + this.cursorOffset;
+        if (y < 1) { y = 1; }
+        if (y > VoxelWorld.SizeY - 2) { y = VoxelWorld.SizeY - 2; }
+        return y;
+    }
+
+    public int TargetX() {
+        if (this.facing == 1) { return this.playerX - 1; }
+        if (this.facing == 0) { return this.playerX + 1; }
+        return this.playerX;
+    }
+
+    public int TargetZ() {
+        if (this.facing == 3) { return this.playerZ - 1; }
+        if (this.facing == 2) { return this.playerZ + 1; }
+        return this.playerZ;
+    }
+
+    // 当前图纸的限时（毫秒）；难度倍率在这里生效。
+    public int planLimitMs() {
+        VoxelPlan plan = this.plans.At(this.planIndex);
+        if (plan == null) { return 0; }
+        if (this.smokeMode) { return 0; }
+        return (int)((float)plan.limitSeconds * 1000.0f * this.shell.TimeScale());
+    }
+
+    // 资源还够不够把当前图纸建完（不够就是失败）。
+    public bool CanStillComplete() {
+        return this.build.CanStillComplete(this.plans, this.planIndex);
+    }
+
+    // ----- IGuiHostLoop --------------------------------------------------
+
+    public void Start(GuiHost h) {
+        this.host = h;
+        h.Hud().Add(this.shell.Overlay().Root());
+        if (this.smokeMode) {
+            // 无头冒烟直接进工地：菜单那一帧不跑玩法，冒烟要跑到真玩法上。
+            this.screen = 1;
+            this.autoBuild = true;
+        } else if (this.autoStart) {
+            this.screen = 1;
+        }
+    }
+
+    public void Event(GuiHost h, int kind, int keycode) {
+        if (kind == 4) {
+            if (keycode >= 0 && keycode < 256) { this.keys[keycode] = true; }
+            if (keycode == 27) { this.shell.Overlay().Toggle(); return; }
+            if (keycode == 49) { this.selected = VoxelWorld.Grass; return; }
+            if (keycode == 50) { this.selected = VoxelWorld.Stone; return; }
+            if (keycode == 51) { this.selected = VoxelWorld.Wood; return; }
+            if (keycode == 52) { this.selected = VoxelWorld.Ore; return; }
+            if (keycode == 81) { this.NudgeCursor(-1); return; }   // Q
+            if (keycode == 69) { this.NudgeCursor(1); return; }    // E
+            return;
+        }
+        if (kind == 5) {
+            if (keycode >= 0 && keycode < 256) { this.keys[keycode] = false; }
+            return;
+        }
+        if (kind == 3) {
+            // 同一次释放事件只处理一次（宿主可能重复投递同一事件）。
+            int seq = h.App().window.EventSeq();
+            if (seq == this.lastSeq) { return; }
+            this.lastSeq = seq;
+            // keycode 是鼠标按钮号：0=左键（放置）、1=右键（破坏）。
+            this.lastButton = keycode;
+            this.OnClick(h.MouseX(), h.MouseY());
+        }
+    }
+
+    public void FixedUpdate(GuiHost h, int deltaMilliseconds) { }
+
+    public void Update(GuiHost h, int deltaMilliseconds) {
+        this.shell.Overlay().Tick();
+        this.sfx.Update(deltaMilliseconds);
+        // 帧计数放在 Update：窗口不可见时宿主跳过渲染（Render 不跑），
+        // 无头冒烟靠这个计数收尾。
+        this.frames = this.frames + 1;
+        if (this.smokeMode && this.frames >= this.smokeFrames) {
+            this.Finish();
+            h.RequestStop();
+            return;
+        }
+        if (this.screen != 1) { return; }
+        this.elapsedMs = this.elapsedMs + deltaMilliseconds;
+        this.planElapsedMs = this.planElapsedMs + deltaMilliseconds;
+        if (this.autoBuild) {
+            this.AutoBuildStep();
+            return;
+        }
+        this.UpdateMovement(deltaMilliseconds);
+        this.CheckTurn();
+    }
+
+    public void Render(GuiHost h, Canvas c, double alpha) {
+        int w = h.StageWidth();
+        int hgt = h.StageHeight();
+        this.iso.Follow(this.playerX, this.playerZ, w, hgt);
+        this.buttons.Clear();
+        if (this.screen == 0) {
+            this.view.DrawMenu(c, this, w, hgt);
+            this.BuildMenuButtons(w, hgt);
+        } else if (this.screen == 1) {
+            this.view.DrawScene(c, this, w, hgt);
+            this.view.DrawHud(c, this, w, hgt);
+            this.BuildPlayButtons(w, hgt);
+        } else {
+            this.view.DrawScene(c, this, w, hgt);
+            this.view.DrawHud(c, this, w, hgt);
+            this.view.DrawResult(c, this, w, hgt);
+            this.BuildResultButtons(w, hgt);
+        }
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            VoxelButton b = this.buttons[i];
+            bool hover = b.enabled && this.host != null
+                && this.host.MouseX() >= b.x && this.host.MouseX() < b.x + b.w
+                && this.host.MouseY() >= b.y && this.host.MouseY() < b.y + b.h;
+            this.view.DrawButton(c, b.label, b.x, b.y, b.w, b.h, b.enabled, hover, b.kind);
+        }
+        if (this.capturePath != "" && this.frames == this.captureFrame) {
+            c.WritePixels(this.capturePath, 0, 0, c.Width(), c.Height());
+            Console.WriteLine("VOXEL_CAPTURE " + Convert.ToString(c.Width())
+                + "x" + Convert.ToString(c.Height()));
+        }
+    }
+
+    public void Stop(GuiHost h) {
+        this.Finish();
+    }
+
+    void Finish() {
+        if (this.finished) { return; }
+        this.finished = true;
+        this.shell.Save();
+        Console.WriteLine("VOXEL_SAVE blueprints=" + Convert.ToString(this.shell.BlueprintsDone())
+            + " blocks=" + Convert.ToString(this.shell.BlocksPlaced())
+            + " best=" + Convert.ToString(this.shell.BestTimeMs())
+            + " runs=" + Convert.ToString(this.shell.Runs()));
+        if (this.smokeMode) {
+            Console.WriteLine("VOXEL_SMOKE_OK frames=" + Convert.ToString(this.frames)
+                + " plans=" + Convert.ToString(this.planIndex)
+                + " placed=" + Convert.ToString(this.runPlaced));
+        }
+    }
+
+    // ----- 玩法 -----------------------------------------------------------
+
+    void NudgeCursor(int delta) {
+        int next = this.cursorOffset + delta;
+        if (next < -3) { next = -3; }
+        if (next > 5) { next = 5; }
+        this.cursorOffset = next;
+    }
+
+    // 连续输入：方向键 / WASD 移动，一格 170ms。
+    void UpdateMovement(int deltaMs) {
+        if (this.moveTimer > 0) { this.moveTimer = this.moveTimer - deltaMs; }
+        int dx = 0;
+        int dz = 0;
+        if (this.keys[87] || this.keys[38]) { dz = dz - 1; }   // W / ↑
+        if (this.keys[83] || this.keys[40]) { dz = dz + 1; }   // S / ↓
+        if (this.keys[65] || this.keys[37]) { dx = dx - 1; }   // A / ←
+        if (this.keys[68] || this.keys[39]) { dx = dx + 1; }   // D / →
+        if (dx == 0 && dz == 0) { return; }
+        if (this.moveTimer > 0) { return; }
+        this.moveTimer = 170;
+        if (dx != 0 && this.TryMove(dx, 0)) {
+            this.facing = dx > 0 ? 0 : 1;
+            this.sfx.Step();
+            return;
+        }
+        if (dz != 0 && this.TryMove(0, dz)) {
+            this.facing = dz > 0 ? 2 : 3;
+            this.sfx.Step();
+        }
+    }
+
+    // 走一格：可以上一级台阶、可以往下掉，两格以上的高墙挡住。
+    public bool TryMove(int dx, int dz) {
+        int nx = this.playerX + dx;
+        int nz = this.playerZ + dz;
+        if (!this.world.CanStepTo(nx, nz, this.playerBody)) { return false; }
+        this.playerX = nx;
+        this.playerZ = nz;
+        this.playerBody = this.world.ColumnTop(nx, nz);
+        return true;
+    }
+
+    // 放置：面朝方向的相邻格 + 当前建造高度。不能砌在自己脚下。
+    public bool TryPlace() {
+        int tx = this.TargetX();
+        int tz = this.TargetZ();
+        int ty = this.cursorY();
+        if (tx == this.playerX && tz == this.playerZ && ty == this.playerBody) {
+            this.sfx.Error();
+            return false;
+        }
+        if (!this.build.CanPlace(tx, ty, tz, this.selected)) {
+            this.sfx.Error();
+            return false;
+        }
+        this.build.Place(tx, ty, tz, this.selected);
+        this.placedTotal = this.placedTotal + 1;
+        this.runPlaced = this.runPlaced + 1;
+        this.sfx.Place();
+        return true;
+    }
+
+    // 破坏：同一格，回收少量资源（矿灯不可回收）。
+    public bool TryBreak() {
+        int tx = this.TargetX();
+        int tz = this.TargetZ();
+        int ty = this.cursorY();
+        if (!this.build.Break(tx, ty, tz)) {
+            this.sfx.Error();
+            return false;
+        }
+        this.sfx.Break();
+        return true;
+    }
+
+    // 每回合结算：图纸建成 → 解锁下一张；资源/时间耗尽 → 失败结算。
+    void CheckTurn() {
+        VoxelPlan plan = this.plans.At(this.planIndex);
+        if (plan == null) { return; }
+        if (this.plans.Complete(this.planIndex, this.world)) {
+            this.shell.RecordBuild(1, 0);
+            this.placedTotal = 0;
+            this.sfx.Complete();
+            this.planIndex = this.planIndex + 1;
+            this.planElapsedMs = 0;
+            this.cursorOffset = 0;
+            if (this.planIndex >= this.plans.Count()) {
+                this.shell.RecordFinish(this.elapsedMs);
+                this.sfx.Win();
+                this.EndRun();
+                this.screen = 2;
+            }
+            return;
+        }
+        if (!this.CanStillComplete()) {
+            this.failed = true;
+            this.failReason = "材料不够了——图纸还没建完";
+            this.sfx.Fail();
+            this.EndRun();
+            this.screen = 2;
+            return;
+        }
+        int limit = this.planLimitMs();
+        if (limit > 0 && this.planElapsedMs >= limit) {
+            this.failed = true;
+            this.failReason = "超时了——这张图纸没按时建成";
+            this.sfx.Fail();
+            this.EndRun();
+            this.screen = 2;
+        }
+    }
+
+    // 一局收尾：把本局放置的方块数记进累计（只记一次）。
+    void EndRun() {
+        if (this.runEnded) { return; }
+        this.runEnded = true;
+        this.shell.RecordBlocks(this.runPlaced);
+    }
+
+    // 自动建造（无头冒烟 / 演示）：走位到图纸格旁边，按真实放置接口垒上去。
+    void AutoBuildStep() {
+        VoxelPlan plan = this.plans.At(this.planIndex);
+        if (plan == null) { return; }
+        for (int i = 0; i < plan.reqs.Length; i = i + 1) {
+            VoxelReq r = plan.reqs[i];
+            if (this.world.Get(r.x, r.y, r.z) == r.kind) { continue; }
+            int sx = r.x;
+            int sz = r.z;
+            // 站位：优先选离玩家近的相邻格
+            int[] dxs = new int[] { 1, -1, 0, 0 };
+            int[] dzs = new int[] { 0, 0, 1, -1 };
+            int best = -1;
+            int bestDist = 1000000;
+            for (int k = 0; k < 4; k = k + 1) {
+                int nx = r.x + dxs[k];
+                int nz = r.z + dzs[k];
+                if (!this.world.InBounds(nx, 0, nz)) { continue; }
+                int d = (nx - this.playerX) * (nx - this.playerX)
+                    + (nz - this.playerZ) * (nz - this.playerZ);
+                if (d < bestDist) { bestDist = d; best = k; }
+            }
+            if (best < 0) { return; }
+            sx = r.x + dxs[best];
+            sz = r.z + dzs[best];
+            // 走位（每帧一步）
+            if (this.playerX != sx || this.playerZ != sz) {
+                if (!this.StepToward(sx, sz)) {
+                    this.playerX = sx;
+                    this.playerZ = sz;
+                    this.playerBody = this.world.ColumnTop(sx, sz);
+                }
+                return;
+            }
+            // 转向 + 对准高度 + 放置
+            this.facing = this.FacingToward(r.x, r.z);
+            this.cursorOffset = r.y - this.playerBody;
+            if (this.cursorOffset < -3) { this.cursorOffset = -3; }
+            if (this.cursorOffset > 5) { this.cursorOffset = 5; }
+            int tx = this.TargetX();
+            int tz = this.TargetZ();
+            int ty = this.cursorY();
+            if (tx != r.x || tz != r.z || ty != r.y) { return; }
+            if (this.world.Get(r.x, r.y, r.z) != VoxelWorld.Air) {
+                this.build.Break(r.x, r.y, r.z);
+                return;
+            }
+            this.selected = r.kind;
+            if (!this.build.CanPlace(r.x, r.y, r.z, r.kind)) {
+                // 材料不够了，认输结算
+                this.failed = true;
+                this.failReason = "材料不够了——图纸还没建完";
+                this.screen = 2;
+                return;
+            }
+            this.build.Place(r.x, r.y, r.z, r.kind);
+            this.placedTotal = this.placedTotal + 1;
+            this.runPlaced = this.runPlaced + 1;
+            this.CheckTurn();
+            return;
+        }
+        // 这一张建完了
+        this.CheckTurn();
+    }
+
+    bool StepToward(int tx, int tz) {
+        int dx = 0;
+        int dz = 0;
+        if (tx != this.playerX) { dx = tx > this.playerX ? 1 : -1; }
+        else if (tz != this.playerZ) { dz = tz > this.playerZ ? 1 : -1; }
+        if (dx != 0 && this.TryMove(dx, 0)) { return true; }
+        if (dz != 0 && this.TryMove(0, dz)) { return true; }
+        return false;
+    }
+
+    int FacingToward(int tx, int tz) {
+        if (tx > this.playerX) { return 0; }
+        if (tx < this.playerX) { return 1; }
+        if (tz > this.playerZ) { return 2; }
+        return 3;
+    }
+
+    // ----- 按钮 -----------------------------------------------------------
+
+    void BuildMenuButtons(int w, int h) {
+        this.buttons.Add(new VoxelButton("开始建造", 1, w / 2 - 90, h / 2 + 40, 180, 48, true));
+        this.buttons.Add(new VoxelButton("设置", 0, w - 108, 6, 88, 34, true));
+    }
+
+    void BuildPlayButtons(int w, int h) {
+        this.buttons.Add(new VoxelButton("设置", 0, w - 108, 6, 88, 34, true));
+    }
+
+    void BuildResultButtons(int w, int h) {
+        this.buttons.Add(new VoxelButton("再来一次", 1, w / 2 - 200, h / 2 + 150, 180, 46, true));
+        this.buttons.Add(new VoxelButton("回到主菜单", 0, w / 2 + 20, h / 2 + 150, 180, 46, true));
+        this.buttons.Add(new VoxelButton("设置", 0, w - 108, 6, 88, 34, true));
+    }
+
+    // ----- 点击 -----------------------------------------------------------
+
+    void OnClick(int mx, int my) {
+        if (this.shell.Overlay().IsOpen()) { return; }
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            VoxelButton b = this.buttons[i];
+            if (!b.enabled) { continue; }
+            if (mx < b.x || mx >= b.x + b.w || my < b.y || my >= b.y + b.h) { continue; }
+            this.OnButton(b);
+            return;
+        }
+        if (this.screen != 1) { return; }
+        // 背包条：点槽位换材料
+        int h = this.host == null ? VoxelView.DesignH : this.host.StageHeight();
+        int w = this.host == null ? VoxelView.DesignW : this.host.StageWidth();
+        int sy = VoxelView.SlotY(h);
+        if (my >= sy && my < sy + VoxelView.SlotSize) {
+            for (int k = 1; k < VoxelWorld.KindCount; k = k + 1) {
+                int sx = VoxelView.SlotX(w, k);
+                if (mx >= sx && mx < sx + VoxelView.SlotSize) {
+                    this.selected = k;
+                    return;
+                }
+            }
+            return;
+        }
+        // 左键放置、右键破坏：宿主用 kind=3（释放）+ 按钮号区分。
+        if (this.lastButton == 1) { this.TryBreak(); } else { this.TryPlace(); }
+    }
+
+    void OnButton(VoxelButton b) {
+        string label = b.label;
+        if (label == "设置") { this.shell.Overlay().Toggle(); return; }
+        if (label == "开始建造") {
+            this.ResetRun(Rng.Seed(20261021L + (long)Window.GetTickMs()));
+            this.screen = 1;
+            return;
+        }
+        if (label == "再来一次") {
+            this.ResetRun(Rng.Seed(20261021L + (long)Window.GetTickMs()));
+            this.screen = 1;
+            return;
+        }
+        if (label == "回到主菜单") {
+            this.screen = 0;
+            return;
+        }
+    }
+}

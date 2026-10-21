@@ -1,14 +1,15 @@
-# 立方世界 无头冒烟：编译后在 UiDriver 下跑几帧再退出。
+# 立方世界 无头测试：三段全绿才算过。
 #
-# 判据：exe 编译得过、帧循环不崩、VOXEL 冒烟标记能让程序跑满若干帧
-# 自行退出（顺带验证资源查找路径通不通）。GUI 游戏没有断言式用例套件，
-# 这里以"进程按脚本正常退出 + 输出冒烟标记"为通过条件。
+#   1. voxel_test_OK    —— 玩法断言（三维存取 / 放置破坏 / 资源 / 图纸判定与
+#                          逐张解锁 / 等距投影 / 行走阻挡 / 三种子整局）
+#   2. voxel_SAVE_OK    —— 存档写两遍读得到（runs=1 -> runs=2）
+#   3. voxel_SMOKE_OK   —— 无头冒烟：程序自己跑满帧并退出
 #
-# 存档另跑两遍：第一遍写盘，第二遍（新进程）必须读回上一遍写的档。
+# 存档落在 build/voxel/savetest 里，不碰玩家机器上的 %LOCALAPPDATA%/Voxel。
 param(
     [string]$Compiler = $env:ZANC,
     [string]$PackageProject = '',
-    [int]$TimeoutSeconds = 90
+    [int]$TimeoutSeconds = 120
 )
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
@@ -22,6 +23,24 @@ $out = Join-Path $repo 'build/voxel'
 & (Join-Path $PSScriptRoot 'build.ps1') -Compiler $Compiler -PackageProject $PackageProject -Output $out
 $exe = Join-Path $out 'Voxel.exe'
 if (-not (Test-Path $exe)) { throw "缺少可执行文件：$exe" }
+
+# --- 第一段：玩法断言 ---
+# 源码要排除 main.zan（它带 Main()，用例自己的 Main 才是入口）。
+$caseSources = @(Get-ChildItem (Join-Path $project 'src') -Recurse -File -Filter *.zan |
+    Where-Object { $_.Name -ne 'main.zan' } |
+    Sort-Object FullName | ForEach-Object { $_.FullName })
+$case = 'voxel_test.zan'
+$stem = [IO.Path]::GetFileNameWithoutExtension($case)
+$caseExe = Join-Path $out "$stem.exe"
+& $Compiler (@((Join-Path $project "tests/$case")) + $caseSources +
+    @('--auto-stdlib', '--package-project', $PackageProject, '-o', $caseExe))
+if ($LASTEXITCODE -ne 0) { throw "玩法用例编译失败：$case (zanc=$LASTEXITCODE)" }
+$caseOut = & $caseExe 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { throw "玩法用例失败：$case`n$caseOut" }
+if ($caseOut -notmatch "$stem OK") { throw "玩法用例输出不对：$case`n$caseOut" }
+Write-Host $caseOut.Trim()
+Write-Host "${stem}_OK"
+
 # 存档落在临时目录里，不碰玩家机器上的 %LOCALAPPDATA%/Voxel。
 $saveDir = Join-Path $out 'savetest'
 if (Test-Path $saveDir) { Remove-Item $saveDir -Recurse -Force }
@@ -29,7 +48,7 @@ New-Item -ItemType Directory -Force $saveDir | Out-Null
 $env:VOXEL_SAVE = $saveDir
 # 冒烟标记：跑满 N 帧后程序自行退出（不走 UiDriver 脚本，避免桌面事件污染）
 $env:VOXEL_SMOKE = '1'
-$env:VOXEL_FRAMES = '90'
+$env:VOXEL_FRAMES = '240'
 $log = Join-Path $out 'voxel_smoke.log'
 if (Test-Path $log) { Remove-Item $log -Force }
 $proc = Start-Process -FilePath $exe -WorkingDirectory $out -PassThru -WindowStyle Hidden `
@@ -58,6 +77,10 @@ $proc2 = Start-Process -FilePath $exe -WorkingDirectory $out -PassThru -WindowSt
 if (-not $proc2.WaitForExit($TimeoutSeconds * 1000)) {
     $proc2.Kill()
     throw "第二遍无头冒烟超时"
+}
+if ($proc2.ExitCode -ne 0) { throw "第二遍无头冒烟失败：exit=$($proc2.ExitCode)" }
+if (-not (Select-String -Path $log2 -Pattern 'VOXEL_SMOKE_OK' -Quiet)) {
+    throw "第二遍无头冒烟未收尾（缺 VOXEL_SMOKE_OK）：$log2"
 }
 $saveLine2 = Select-String -Path $log2 -Pattern 'VOXEL_SAVE' | Select-Object -First 1
 if (-not $saveLine2 -or $saveLine2.Line -notmatch 'runs=2') {

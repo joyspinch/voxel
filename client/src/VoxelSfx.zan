@@ -1,0 +1,36 @@
+using System;
+using Game.Foundation;
+
+// 音效库：加载 assets/sfx 下的 WAV，按事件播放。
+//
+// 底座是公共包 Game.Foundation.SfxBank（磁盘优先 + 内嵌兜底 + 限频 +
+// 无音频设备时静默降级），这里只声明"这个游戏有哪些音效名、什么事件播哪个"。
+public class VoxelSfx {
+    SfxBank bank;
+    AudioBus bus;
+
+    public VoxelSfx() {
+        this.bus = new AudioBus();
+        this.bank = new SfxBank(this.bus);
+        string[] names = new string[] {
+            "place", "break", "step", "error", "complete", "win", "fail"
+        };
+        this.bank.LoadAll("assets/sfx", names);
+    }
+
+    public bool Available() { return this.bank.Available(); }
+    public int Loaded() { return this.bank.Count(); }
+
+    // 音效冷却表要靠总线推进，否则限频永远不失效。
+    public void Update(int deltaMs) {
+        this.bus.Update(deltaMs);
+    }
+
+    public void Place() { this.bank.Play("place", 0.9, 40); }
+    public void Break() { this.bank.Play("break", 0.9, 40); }
+    public void Step() { this.bank.Play("step", 0.5, 120); }
+    public void Error() { this.bank.Play("error", 0.8, 120); }
+    public void Complete() { this.bank.Play("complete", 1.0, 0); }
+    public void Win() { this.bank.Play("win", 1.0, 0); }
+    public void Fail() { this.bank.Play("fail", 1.0, 0); }
+}

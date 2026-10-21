@@ -1,0 +1,72 @@
+using System;
+using Gui;
+using Game.Kit;
+
+// 等距（2.5D）投影：顶面菱形 + 左右两个侧面，按深度排序遮挡。
+//
+// 坐标约定（2:1 等距）：
+//   顶面菱形宽 TW=64、高 TH=32；一层立方体的垂直边长 LEVEL=32。
+//   世界格 (x, z) 的菱形中心在
+//     SX = originX + (x - z) * TW/2      —— x 增大 → 屏幕右移
+//     SY = originY + (x + z) * TH/2 - y*LEVEL —— x+z 增大 → 屏幕下移
+//   方块贴图（64×64）左上角 = (SX - TW/2, SY - TH/2)。
+//
+// 深度：x+z 越大越靠近相机（画面越靠下），因此画家算法按 x+z 升序绘制，
+// 同深度再按 y 升序（下面的先画，上面的压在上面）。VoxelView 按这个序遍历。
+public class VoxelIso {
+    public const int TW = 48;
+    public const int TH = 24;
+    public const int LEVEL = 24;
+    public const int BlockW = 48;
+    public const int BlockH = 48;
+
+    public int originX;
+    public int originY;
+
+    public VoxelIso() {
+        this.originX = 0;
+        this.originY = 0;
+    }
+
+    // 相机跟随玩家：玩家站在画面 62% 高度处。
+    public void Follow(int px, int pz, int w, int h) {
+        this.originX = w / 2 - (px - pz) * (VoxelIso.TW / 2);
+        this.originY = (h * 62) / 100 - (px + pz) * (VoxelIso.TH / 2)
+            + VoxelIso.LEVEL;
+    }
+
+    public int SX(int x, int z) {
+        return this.originX + (x - z) * (VoxelIso.TW / 2);
+    }
+
+    public int SY(int x, int z, int y) {
+        return this.originY + (x + z) * (VoxelIso.TH / 2) - y * VoxelIso.LEVEL;
+    }
+
+    // 方块贴图左上角
+    public int BlockLeft(int x, int z) {
+        return this.SX(x, z) - VoxelIso.TW / 2;
+    }
+
+    public int BlockTop(int x, int z, int y) {
+        return this.SY(x, z, y) - VoxelIso.TH / 2;
+    }
+
+    // 屏幕坐标 → 最近的格子（鼠标点选格子用；只取 x/z，y 由调用方决定）
+    public int CellX(int sx, int sz) {
+        int dx = sx - this.originX;
+        int dz = sz - this.originY;
+        // sx = ox + (x-z)*TW/2 ; sz = oy + (x+z)*TH/2
+        int a = dx / (VoxelIso.TW / 2);
+        int b = dz / (VoxelIso.TH / 2);
+        return (a + b) / 2;
+    }
+
+    public int CellZ(int sx, int sz) {
+        int dx = sx - this.originX;
+        int dz = sz - this.originY;
+        int a = dx / (VoxelIso.TW / 2);
+        int b = dz / (VoxelIso.TH / 2);
+        return (b - a) / 2;
+    }
+}
