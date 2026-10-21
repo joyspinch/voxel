@@ -76,16 +76,22 @@
 
 ```powershell
 $env:ZAN_HOME = 'D:\project\zan-lang'          # 编译器与 stdlib 同源
-pwsh -File client\tools\build.ps1 -PackageProject D:\project\zan-head
+pwsh -File client\tools\build.ps1
 # 产出 build/voxel/Voxel.exe（assets/ 与 skins/ 会一并复制到 exe 旁，运行时磁盘优先）
 ```
 
-- 编译用 `D:\project\zan-lang\build\zanc.exe`；`-PackageProject` 指向
-  公共包所在的 zan-lang 仓库（仓库内 = 仓库根，仓库外 = zan-lang 仓库）。
+- 编译用 `D:\project\zan-lang\build\zanc.exe`。
+- **公共包直接用主仓** `D:\project\zan-lang`（`--package-project` 指向仓库根，
+  包从它的 `packages/` 解析，只读）。脚本默认就指主仓，`$env:ZAN_HOME` 或
+  `-PackageProject` 可覆盖。**不要建 git worktree 副本**——副本停在旧 commit，
+  公共包一改就不跟（已因此出过故障：goldminer 自建的包副本）。
 - 想连包一起发单文件：`pwsh -File client\tools\build.ps1 -ZancArgs '--publish'`。
 - **皮肤包**：构建时把 `client/assets/skins/voxel/` 拷到
-  `build/voxel/skins/voxel/`，并把公共包的 `skins/base.css` 拷到
-  `build/voxel/skins/`（Gui 只在磁盘上找它，缺了控件会退回系统外观）。
+  `build/voxel/skins/voxel/`（exe 同级，运行时磁盘优先于 exe 内嵌资源）。
+  控件基线 `base.css` **不在磁盘上放**：zanc 会自动内嵌 stdlib 的 Gui 皮肤
+  基线（含 `base.css` 与 dark/light），运行时 `Skin.BaseCss()` 磁盘找不到就
+  回落到内嵌那份。只有"整体替换基线"（自带完整 base.css 替身）才会让编译器
+  跳过基线自动内嵌——我们不要替换，所以让它内嵌。
 
 ### 环境变量（调试用）
 
@@ -103,7 +109,7 @@ pwsh -File client\tools\build.ps1 -PackageProject D:\project\zan-head
 ## 四、怎么测
 
 ```powershell
-pwsh -File client\tools\test.ps1 -PackageProject D:\project\zan-head
+pwsh -File client\tools\test.ps1
 ```
 
 三段全绿才算过：
@@ -182,8 +188,10 @@ voxel/
   按源图像素切成 9 块拼（角固定、边横竖拉、中间平铺）；**所有圆弧与装饰必须
   落在角切片内**，否则拉伸会变形——这也是底板程序化生成而不是 AI 出图的原因。
 - **`UseSkin` 必须在 `UseSkin("dark")` 之后**：否则被默认皮肤盖回去；皮肤目录
-  必须与 exe 同级（`build/<game>/skins/<name>/skin.css`），并且要连公共包的
-  `skins/base.css` 一起拷过去。
+  必须与 exe 同级（`build/<game>/skins/<name>/skin.css`）。**不用**把公共包的
+  `skins/base.css` 一起拷过去：zanc 会自动内嵌 stdlib 的 Gui 皮肤基线
+  （含 base.css 与 dark/light），运行时 `Skin.BaseCss()` 磁盘找不到就回落到内嵌
+  那份（`src/compiler/main.c` 的 skins 自动内嵌分支 + `Gui.Styling.Skin.BaseCss`）。
 - **角色必须压在场景上层**：地形有高差，深度正确的画家算法会把人整个埋进
   崖壁后面，玩家看不见自己就没法玩。所以方块按深度画完，角色最后画。
   （代价：紧贴角色放置的第一层方块会被角色挡住一半。）

@@ -18,7 +18,15 @@ if (-not $Compiler) {
     $local = if ($env:ZAN_HOME) { Join-Path $env:ZAN_HOME 'build/zanc.exe' } else { '' }
     if ($local -and (Test-Path $local)) { $Compiler = $local } else { $Compiler = (Get-Command zanc -ErrorAction Stop).Source }
 }
-if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下）' } }
+if (-not $PackageProject) {
+    # 公共包根 = 主仓 zan-lang（packages/ 在它下面）。$ZAN_HOME 优先。
+    if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME }
+    elseif (Test-Path 'D:\project\zan-lang\packages') { $PackageProject = 'D:\project\zan-lang' }
+    else { throw '需要 -PackageProject（或 $env:ZAN_HOME）指向 zan-lang 仓库——公共包在它的 packages/ 下' }
+}
+if (-not (Test-Path (Join-Path $PackageProject 'packages'))) {
+    throw "公共包根下没有 packages/：$PackageProject"
+}
 $out = Join-Path $repo 'build/voxel'
 & (Join-Path $PSScriptRoot 'build.ps1') -Compiler $Compiler -PackageProject $PackageProject -Output $out
 $exe = Join-Path $out 'Voxel.exe'

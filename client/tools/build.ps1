@@ -1,8 +1,12 @@
 # 立方世界 构建：编译 client/src/ 下全部 .zan → 可执行文件。
 #
 # 公共包（Gui / Game.Kit / Game.Foundation / Game.Tactics …）住在 zan-lang
-# 仓库的 packages/ 下，编译要带 --package-project 指向包根：仓库内 = 仓库根；
-# 项目搬到仓库外后 = zan-lang 仓库，由 $ZAN_HOME 或 -PackageProject 指定。
+# 仓库的 packages/ 下，编译要带 --package-project 指向包根。
+#
+# 公共包**直接用主仓**（默认 D:\project\zan-lang，只读），不要建 git worktree
+# 副本：副本停在旧 commit 上，公共包一改就不跟（已因此出过故障）。要换包根
+# 用 $ZAN_HOME 或 -PackageProject 覆盖。
+#
 # assets/ 由 zanc 自动内嵌进 exe（入口源文件带目录前缀时才会定位到），
 # 这里再在 exe 旁留一份磁盘副本——运行时磁盘优先，换图即生效。
 param(
@@ -21,7 +25,15 @@ if (-not $Compiler) {
     if ($local -and (Test-Path $local)) { $Compiler = $local } else { $Compiler = (Get-Command zanc -ErrorAction Stop).Source }
 }
 if (-not $Stdlib -and $env:ZAN_HOME) { $Stdlib = Join-Path $env:ZAN_HOME 'stdlib' }
-if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下）' } }
+if (-not $PackageProject) {
+    # 公共包根 = 主仓 zan-lang（packages/ 在它下面）。$ZAN_HOME 优先。
+    if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME }
+    elseif (Test-Path 'D:\project\zan-lang\packages') { $PackageProject = 'D:\project\zan-lang' }
+    else { throw '需要 -PackageProject（或 $env:ZAN_HOME）指向 zan-lang 仓库——公共包在它的 packages/ 下' }
+}
+if (-not (Test-Path (Join-Path $PackageProject 'packages'))) {
+    throw "公共包根下没有 packages/：$PackageProject"
+}
 if (-not $Output) { $Output = Join-Path $repo 'build/voxel' }
 $Output = [IO.Path]::GetFullPath($Output)
 New-Item -ItemType Directory -Force -Path $Output | Out-Null
@@ -53,12 +65,14 @@ if (Test-Path $skinSrc) {
     New-Item -ItemType Directory -Force -Path $skinDst | Out-Null
     Copy-Item (Join-Path $skinSrc '*') $skinDst -Recurse -Force
 }
-# 控件基线 base.css 跟皮肤包放在一起：Gui 只在磁盘上找它（没有内嵌
-# 兜底），缺了它整层组件基线就没了，控件会退回硬编码的系统外观。
-$baseCss = Join-Path $PackageProject 'packages/Zan.Gui/src/Gui/skins/base.css'
-if (Test-Path $baseCss) {
-    $skinsDir = Join-Path $Output 'skins'
-    New-Item -ItemType Directory -Force -Path $skinsDir | Out-Null
-    Copy-Item $baseCss (Join-Path $skinsDir 'base.css') -Force
-}
+# 清掉旧版遗留的磁盘 base.css（老构建拷过一份）：留着会盖住 exe 内嵌的
+# 基线，让"内嵌兜底到底有没有生效"这件事永远测不出来。
+$staleBase = Join-Path $Output 'skins/base.css'
+if (Test-Path $staleBase) { Remove-Item $staleBase -Force }
+# 控件基线 base.css **不在这里拷**：zanc 会自动内嵌 stdlib 的 Gui 皮肤基线
+# （含 base.css 与 dark/light——见 src/compiler/main.c 的 skins 自动内嵌分支；
+# embedres 的过滤器只作用于 depth-1 的皮肤包目录，base.css 是文件照内嵌）。
+# 运行时 Gui 也是磁盘优先、内嵌兜底（Gui.Styling.Skin.BaseCss），所以 exe 旁
+# 不必再放一份 base.css——省掉它还免了"磁盘旧基线盖住 exe 内嵌新基线"的漂移。
+# 只有"整体替换基线"（自带完整 base.css 替身）才会让编译器跳过基线自动内嵌。
 Write-Host "Built $exe"

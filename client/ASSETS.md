@@ -70,8 +70,9 @@ MineClone2 / VoxeLibre 只作玩法参考，仓库里没有它的任何文件，
 
 `skins/voxel/skin.css`：矿洞风（石灰岩灰 + 铜绿 + 矿灯橙）。构建时拷到
 `build/voxel/skins/voxel/`（exe 同级），启动时 `host.App().UseSkin("voxel")`
-应用（必须在 `UseSkin("dark")` 之后）。控件基线 `base.css` 一并拷到
-`build/voxel/skins/`（Gui 只在磁盘上找它，缺了控件会退回硬编码的系统外观）。
+应用（必须在 `UseSkin("dark")` 之后）。控件基线 `base.css` **不拷**——zanc 会
+自动内嵌 stdlib 的 Gui 皮肤基线（含 base.css 与 dark/light），运行时
+`Skin.BaseCss()` 磁盘找不到就回落到内嵌那份。
 令牌名照 `packages/Zan.Gui/src/Gui/skins/base.css` 的清单抄，色值与
 `client/src/VoxelPalette.zan` 一一对应。
 
@@ -144,8 +145,8 @@ pwsh -File client\tools\gen_images.ps1      # 需要 OPENAI_API_KEY
 python client\tools\make_assets.py
 
 # 3) 重新编译并跑测试
-pwsh -File client\tools\build.ps1 -PackageProject D:\project\zan-head
-pwsh -File client\tools\test.ps1  -PackageProject D:\project\zan-head
+pwsh -File client\tools\build.ps1
+pwsh -File client\tools\test.ps1
 ```
 
 `make_assets.py` 的处理链：
