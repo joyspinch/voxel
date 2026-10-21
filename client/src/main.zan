@@ -1,0 +1,184 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+
+// 立方世界 · VOXEL —— 阶段一：项目骨架 + 真 3D 体素场景。
+//
+// 参考源：VoxeLibre/VoxeLibre（= MineClone2，Luanti 引擎上的 Minecraft 克隆）。
+// 代码 GPLv3+；素材以 CC BY-SA 3.0 为主（LEGAL.md 逐文件标注，混有
+// CC BY-SA 4.0 / CC BY 4.0 / CC0）。上游含 Minecraft 1.11 的 Pixel
+// Perfection 资源包，商用前须先自查该复制链。
+// 抄的是"方块世界 + 区块 + 物品栏 + 合成"的玩法结构，不是代码、不是素材。
+//
+// Zan 路线：真 3D 管线（Canvas.MeshUpload / DrawMesh3DBatch + Mat4）。
+// 约束（已核实）：只有 GPU 后端实现 3D，CPU 兜底档 DrawMesh3D 返回 0
+// 且不落像素——本文件对此有 2D 线框回退。3D 网格顶点必须手写，全仓
+// 没有 glTF/FBX 模型加载器。单次批提交上限 1024 实例。
+//
+// 环境变量：VOXEL_SMOKE=1 / VOXEL_FRAMES=<n> / VOXEL_CAPTURE=<path.zpx>
+public class Program {
+    Form form;
+    App app;
+    int frames = 0;
+    int tick = 0;
+
+    // 相机
+    float yaw = 0.7f;
+    float pitch = 0.55f;
+    float dist = 22.0f;
+    bool dragging = false;
+
+    // 3D 资源
+    int blockMesh = 0;
+    MeshBatch batch;
+    string backendName = "";
+
+    // 体素地形：高度图（世界坐标 x/z → 高度）
+    const int World = 24;
+    float[] heights = new float[World * World];
+
+    static void Main() {
+        Program p = new Program();
+        p.Run();
+    }
+
+    void Run() {
+        form = Form.CreateDark("立方世界 · VOXEL", 1280, 800);
+        app = form.GetApp();
+        app.UseSkin("dark");
+        // 请求 GL 硬件后端（3D 管线只在 GPU 后端实现，CPU 档 DrawMesh3D
+        // 返回 0 且不落像素）。拿不到 GL 上下文不算失败，落到 2D 回退。
+        Canvas.SetBackend(1);
+        backendName = Canvas.Backend();
+        app.Show();
+        app.RequestRedraw();
+        while (true) {
+            int got = app.PollOneEvent();
+            if (got < 0) { break; }
+            Tick();
+            app.BeginFrame();
+            Render();
+            app.RenderChrome("立方世界 · VOXEL");
+            frames = frames + 1;
+            string capture = Environment.GetEnvironmentVariable("VOXEL_CAPTURE");
+            if (capture != "" && frames == 60) {
+                app.canvas.WritePixels(capture, 0, 0, app.ClientWidth(), app.ClientHeight());
+                Console.WriteLine("VOXEL_CAPTURE " + Convert.ToString(app.ClientWidth())
+                    + "x" + Convert.ToString(app.ClientHeight()));
+            }
+            app.PresentFrame();
+            if (IsSmoke() && frames >= SmokeFrames()) {
+                Console.WriteLine("VOXEL_SMOKE_OK frames=" + Convert.ToString(frames)
+                    + " backend=" + backendName);
+                break;
+            }
+            app.RequestRedraw();
+            Window.SleepMs(16);
+        }
+    }
+
+    bool IsSmoke() {
+        return Environment.GetEnvironmentVariable("VOXEL_SMOKE") == "1";
+    }
+
+    int SmokeFrames() {
+        string v = Environment.GetEnvironmentVariable("VOXEL_FRAMES");
+        if (v == "") { return 90; }
+        return Convert.ToInt32(v);
+    }
+
+    void Tick() {
+        tick = tick + 1;
+        if (!dragging) {
+            yaw = yaw + 0.0035f;
+            if (yaw > 6.2831853f) { yaw = yaw - 6.2831853f; }
+        }
+        // 高度图：两个正弦叠加，当成地形起伏
+        for (int z = 0; z < World; z = z + 1) {
+            for (int x = 0; x < World; x = x + 1) {
+                float h = (float)Math.Sin((float)x * 0.42f) * 1.6f
+                        + (float)Math.Cos((float)z * 0.37f) * 1.3f;
+                heights[z * World + x] = h;
+            }
+        }
+    }
+
+    Mat4 ViewProj(int cw, int ch) {
+        Mat4 p = Mat4.Perspective(1.0472f, (float)cw / (float)ch, 0.1f, 200.0f);
+        // Y 翻转修正：GPU 3D 管线在顶点着色器里对 clip.y 取负
+        // （zan-lang/src/runtime/zan_game.c 的 ZAN_GAME_3D_VS_*），而 2D
+        // 画布是 y 向下。两者方向相反，3D 内容相对 2D 层上下颠倒。
+        // 这里把投影的 y 缩放取负，让两次翻转互相抵消——世界 +Y 才落在
+        // 屏幕上方。改了这里 voxel 与 racekart 必须同步改。
+        p.m[5] = -p.m[5];
+        float ex = (float)Math.Cos(yaw) * (float)Math.Cos(pitch) * dist;
+        float ey = (float)Math.Sin(pitch) * dist + 2.0f;
+        float ez = (float)Math.Sin(yaw) * (float)Math.Cos(pitch) * dist;
+        Mat4 v = Mat4.LookAt(ex, ey, ez, 0, 0, 0, 0, 1, 0);
+        return p.Mul(v);
+    }
+
+    // 把体素柱压成方块实例：每格一个 1×h×1 的立方体。
+    void BuildBlock(Canvas c) {
+        Mesh3D m = new Mesh3D();
+        m.AddCubeColored(1.0f, 1.0f, 1.0f, 1.0f);
+        blockMesh = c.MeshUpload(m);
+        batch = MeshBatch.Create(1024);
+    }
+
+    void Render() {
+        Canvas c = app.canvas;
+        int cw = c.Width();
+        int ch = c.Height();
+        c.FillVGrad(0, 0, cw, ch, 0xFF17233A, 0xFF3E5A82);
+        if (blockMesh <= 0) { BuildBlock(c); }
+
+        Mat4 pv = ViewProj(cw, ch);
+        int drawn = 0;
+        if (batch != null) {
+            batch.Begin();
+            for (int z = 0; z < World; z = z + 1) {
+                for (int x = 0; x < World; x = x + 1) {
+                    float h = heights[z * World + x] + 2.0f;
+                    if (h < 0.4f) { continue; }
+                    float wx = (float)x - (float)World * 0.5f + 0.5f;
+                    float wz = (float)z - (float)World * 0.5f + 0.5f;
+                    // AddCube 的单位立方体是 -1..1（边长 2、中心在原点），
+                    // 所以缩放要取半边长：0.5 → 1×1 的方块柱。
+                    Mat4 model = Mat4.Translate(wx, h * 0.5f - 1.0f, wz);
+                    model = model.Mul(Mat4.Scale(0.49f, h * 0.5f, 0.49f));
+                    int shade = 90 + ((x + z) % 3) * 30;
+                    int tint = 0xFF000000 | (shade << 16) | ((shade + 20) << 8) | (shade + 40);
+                    batch.Add(blockMesh, "", pv.Mul(model), tint);
+                    drawn = drawn + 1;
+                }
+            }
+        }
+        int drew = batch == null ? 0 : batch.Draw(c);
+        if (drew == 0) {
+            // CPU 兜底档：3D 不落像素，画 2D 俯视网格占位
+            RenderFallback(c, cw, ch);
+        }
+
+        c.DrawText(16, 16, "立方世界 · 真 3D 体素骨架", 0xFFFFFFFF, 20);
+        c.DrawText(16, 44, "backend=" + backendName + "  mode="
+            + (drew == 1 ? "GPU mesh batch" : "2D fallback")
+            + "  blocks=" + Convert.ToString(drawn)
+            + "  frames=" + Convert.ToString(frames), 0xFFD8E4F2, 14);
+        c.DrawText(16, ch - 26, "TODO 素材：16x16 方块贴图（草地/石头/木/矿）x4 变体 + 手持物图标 + 角色皮肤",
+            0xC0D8E4F2, 14);
+    }
+
+    // CPU 兜底：用同一份相机数学画网格地平线
+    void RenderFallback(Canvas c, int cw, int ch) {
+        c.FillRect(0, 0, cw, ch, 0xFF17233A);
+        for (int i = 0; i < 14; i = i + 1) {
+            int y = ch / 2 + i * 22;
+            c.DrawLine(0, y, cw, y, 0xFF2E4468, 1);
+        }
+        for (int i = -8; i <= 8; i = i + 1) {
+            int x = cw / 2 + i * 70;
+            c.DrawLine(x, ch / 2, x, ch, 0xFF2E4468, 1);
+        }
+    }
+}

@@ -1,0 +1,4 @@
+build/
+_scratch/
+*.zpx
+__pycache__/
