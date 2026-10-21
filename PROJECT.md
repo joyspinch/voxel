@@ -48,7 +48,7 @@ ZAN_HOME 指向 zan-lang 仓库时用它的 `build/zanc.exe` 与 `stdlib/`；不
 pwsh -File client/tools/test.ps1     # 无头冒烟：跑满 90 帧后自行退出
 ```
 
-工作区批量冒烟：`pwsh -File tools/smoke-all.ps1`（一次跑完 10 个新项目）。
+工作区批量冒烟：在 zan-lang 仓库侧跑 `pwsh -File scripts/smoke_all_game_projects.ps1`（一次跑完仓库外全部游戏项目）。
 
 ## 当前状态
 
