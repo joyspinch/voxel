@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Gui;
+using Gui.Backend;
 
 // 立方世界 · VOXEL —— 阶段一：项目骨架 + 真 3D 体素场景。
 //
@@ -16,9 +17,11 @@ using Gui;
 // 没有 glTF/FBX 模型加载器。单次批提交上限 1024 实例。
 //
 // 环境变量：VOXEL_SMOKE=1 / VOXEL_FRAMES=<n> / VOXEL_CAPTURE=<path.zpx>
+// VOXEL_SAVE=<目录> 覆盖存档目录（测试脚本用）。
 public class Program {
     Form form;
     App app;
+    GameShell shell;
     int frames = 0;
     int tick = 0;
 
@@ -50,14 +53,34 @@ public class Program {
         // 返回 0 且不落像素）。拿不到 GL 上下文不算失败，落到 2D 回退。
         Canvas.SetBackend(1);
         backendName = Canvas.Backend();
+        // 外壳：存档（最远视距/已放置方块数）+ 设置浮层。浮层是标准库控件，
+        // 盖在直绘画面之上——Esc 开关。
+        this.shell = new GameShell();
+        form.Add(this.shell.Overlay().Root());
+        dist = (float)this.shell.Zoom();
         app.Show();
         app.RequestRedraw();
         while (true) {
             int got = app.PollOneEvent();
-            if (got < 0) { break; }
+            if (got < 0) {
+                this.Finish();
+                break;
+            }
+            // Esc 开关设置浮层（只有真有事件时才看键码，否则会拿上一帧的
+            // 残留值反复开关）。
+            if (got == 1 && app.window.EventKind() == 4
+                && app.window.EventKeyCode() == Keys.Escape()) {
+                this.shell.Overlay().Toggle();
+            }
+            this.shell.Overlay().Tick();
             Tick();
             app.BeginFrame();
             Render();
+            // 控件树叠在直绘之上：测量 → 排布 → 绘制。
+            form.MeasureTree(app);
+            form.Arrange(app.ShapeOffX(), app.ContentTop() + app.ShapeOffY(),
+                app.ClientWidth(), app.ClientHeight() - app.ContentTop());
+            form.RenderTree(app);
             app.RenderChrome("立方世界 · VOXEL");
             frames = frames + 1;
             string capture = Environment.GetEnvironmentVariable("VOXEL_CAPTURE");
@@ -70,11 +93,20 @@ public class Program {
             if (IsSmoke() && frames >= SmokeFrames()) {
                 Console.WriteLine("VOXEL_SMOKE_OK frames=" + Convert.ToString(frames)
                     + " backend=" + backendName);
+                this.Finish();
                 break;
             }
             app.RequestRedraw();
             Window.SleepMs(16);
         }
+    }
+
+    // 收尾：存档落盘 + 打印读回值（测试脚本靠这行验证"跑两遍读得到"）。
+    void Finish() {
+        this.shell.Save();
+        Console.WriteLine("VOXEL_SAVE dist=" + Convert.ToString(this.shell.BestDist())
+            + " blocks=" + Convert.ToString(this.shell.BestBlocks())
+            + " runs=" + Convert.ToString(this.shell.Runs()));
     }
 
     bool IsSmoke() {
@@ -89,8 +121,12 @@ public class Program {
 
     void Tick() {
         tick = tick + 1;
-        if (!dragging) {
-            yaw = yaw + 0.0035f;
+        // 视距跟着设置走（拉远拉近看不同远近）。
+        dist = (float)this.shell.Zoom();
+        this.shell.ObserveDist(this.shell.Zoom());
+        if (!dragging && this.shell.AutoSpin()) {
+            // 难度档决定相机转速——设置不是摆设。
+            yaw = yaw + this.shell.SpinRate();
             if (yaw > 6.2831853f) { yaw = yaw - 6.2831853f; }
         }
         // 高度图：两个正弦叠加，当成地形起伏
@@ -159,12 +195,18 @@ public class Program {
             // CPU 兜底档：3D 不落像素，画 2D 俯视网格占位
             RenderFallback(c, cw, ch);
         }
+        // 已放置方块数（场景方块数）进存档。
+        this.shell.ObserveBlocks(drawn);
 
         c.DrawText(16, 16, "立方世界 · 真 3D 体素骨架", 0xFFFFFFFF, 20);
         c.DrawText(16, 44, "backend=" + backendName + "  mode="
             + (drew == 1 ? "GPU mesh batch" : "2D fallback")
             + "  blocks=" + Convert.ToString(drawn)
             + "  frames=" + Convert.ToString(frames), 0xFFD8E4F2, 14);
+        c.DrawText(16, 70, "难度 " + Convert.ToString(this.shell.Difficulty())
+            + "  视距 " + Convert.ToString(this.shell.Zoom())
+            + "  自动旋转 " + (this.shell.AutoSpin() ? "开" : "关"), 0xFF9FB0C6, 14);
+        c.DrawText(16, ch - 52, "Esc 打开设置", 0xC0D8E4F2, 14);
         c.DrawText(16, ch - 26, "TODO 素材：16x16 方块贴图（草地/石头/木/矿）x4 变体 + 手持物图标 + 角色皮肤",
             0xC0D8E4F2, 14);
     }
