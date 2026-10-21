@@ -1,0 +1,23 @@
+# UiDriver 脚本：截「角色朝右」的画面。
+#
+# 用法（仓库根 voxel/ 下）：
+#   $out = 'build/voxel'
+#   $env:VOXEL_AUTOSTART = '1'
+#   $env:ZAN_UI_OUT = "$out/uidrv"
+#   $env:ZAN_UI_SCRIPT = 'D:\project\games\voxel\client\tools\shot_face_right.script'
+#   python D:/project/zan-lang/scripts/shot_window.py `
+#     "$out/Voxel.exe" "$out/ui_face_right.png" 5.0 $out
+#
+# 脚本按 UiDriver 语法逐行注入合成输入：
+#   wait <ms>   等待；click <x> <y>  合成一次左键点击；move <x> <y> 移动鼠标；
+#   keydown/keyup <键码>  合成按键。键码是 Windows 虚拟键码：A=65、D=68、Esc=27。
+#
+# VOXEL_AUTOSTART=1 直接进工地（跳过菜单）；按 D 向右走一格 → 朝向变成 +x
+# （等距投影里 +x 在屏幕右下 = 朝右那一帧）。
+# move 先把鼠标停在场景里，免得悬在标题栏按钮上弹出系统提示。
+move 640 500
+wait 400
+keydown 68
+wait 900
+keyup 68
+wait 2000

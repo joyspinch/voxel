@@ -97,7 +97,13 @@ public class VoxelWorld {
 
     // 地形：起伏的草皮台地 + 零星石头/矿 + 树；工地与出生点推平，
     // 图纸才能从零建起，角色也才有落脚的高差。
+    //
+    // 地表材质用**低频噪声**切出成片的基岩与矿脉（不是逐格随机）：成片的
+    // 石头与草皮交错，地面才读得出"地形"，而不是一张撒了白点的绿纸。
     public void Generate(Rng rng) {
+        // 噪声采样偏移：不同种子给出不同的基岩分布。
+        int ox = rng.Range(0, 60);
+        int oz = rng.Range(0, 60);
         for (int z = 0; z < VoxelWorld.SizeZ; z = z + 1) {
             for (int x = 0; x < VoxelWorld.SizeX; x = x + 1) {
                 double wave = (double)Math.Sin((double)x * 0.31) * 1.15
@@ -107,12 +113,14 @@ public class VoxelWorld {
                 if (levels < 1) { levels = 1; }
                 if (levels > 4) { levels = 4; }
                 if (this.IsFlatArea(x, z)) { levels = 1; }
+                // 基岩/矿脉的低频分布（5 格一个噪声格 = 大片区域）。
+                float n = VoxelTerrain.Noise(x + ox, z + oz, 5, 17);
                 for (int y = 0; y < levels; y = y + 1) {
                     int kind = VoxelWorld.Grass;
                     if (y == levels - 1) {
-                        int r = rng.Range(0, 100);
-                        if (r < 7) { kind = VoxelWorld.Stone; }
-                        else if (r < 11) { kind = VoxelWorld.Ore; }
+                        // 窄带 = 细矿脉；宽带 = 成片基岩露头。
+                        if (n > 0.80f) { kind = VoxelWorld.Stone; }
+                        else if (n > 0.74f) { kind = VoxelWorld.Ore; }
                     }
                     this.Set(x, y, z, kind);
                 }

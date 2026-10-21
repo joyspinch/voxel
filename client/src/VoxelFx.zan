@@ -1,0 +1,149 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+using Game.Kit;
+
+// 一颗碎屑/尘土粒子。
+//
+// 锚在世界格（wx,wz,wy）上，屏幕偏移（ox,oy）随时间漂：
+// 相机移动时粒子跟着世界走，不会"粘在屏幕上"。
+public class VoxelParticle {
+    public int wx;
+    public int wz;
+    public int wy;
+    public float ox;
+    public float oy;
+    public float vx;
+    public float vy;
+    public float life;
+    public float maxLife;
+    public int size;
+    public int color;
+    public bool active;
+}
+
+// 建造反馈特效：放置扬尘 + 破坏碎屑。
+//
+// 底座是纯几何绘制（方块碎屑就该是方块），不占贴图预算；
+// 一次落地尘/碎屑 + 已有音效（place/break）就是完整的因果反馈。
+public class VoxelFx {
+    public const int MaxParticles = 220;
+    List<VoxelParticle> parts;
+
+    public VoxelFx() {
+        this.parts = new List<VoxelParticle>();
+        for (int i = 0; i < VoxelFx.MaxParticles; i = i + 1) {
+            this.parts.Add(new VoxelParticle());
+        }
+    }
+
+    public int Active() {
+        int n = 0;
+        for (int i = 0; i < this.parts.Count; i = i + 1) {
+            if (this.parts[i].active) { n = n + 1; }
+        }
+        return n;
+    }
+
+    // 在世界格 (wx,wz,wy) 上撒一把粒子。
+    // spread：水平散开速度；lift：向上抛的速度；color：粒子色。
+    public void Spawn(int wx, int wz, int wy, int count, int color,
+                      float spread, float lift, int size, float lifeSeconds) {
+        int spawned = 0;
+        for (int i = 0; i < this.parts.Count && spawned < count; i = i + 1) {
+            VoxelParticle p = this.parts[i];
+            if (p.active) { continue; }
+            p.active = true;
+            p.wx = wx;
+            p.wz = wz;
+            p.wy = wy;
+            // 用格坐标做伪随机：同一次撒点的粒子散开方向不同，但可复现。
+            float r1 = VoxelFx.Rand(i, spawned, 1);
+            float r2 = VoxelFx.Rand(i, spawned, 2);
+            float r3 = VoxelFx.Rand(i, spawned, 3);
+            p.ox = (r1 - 0.5f) * 10.0f;
+            p.oy = (r2 - 0.5f) * 5.0f;
+            p.vx = (r1 - 0.5f) * 2.0f * spread;
+            p.vy = -lift * (0.55f + r3 * 0.75f);
+            p.maxLife = lifeSeconds * (0.7f + r3 * 0.6f);
+            p.life = p.maxLife;
+            p.size = size;
+            p.color = color;
+            spawned = spawned + 1;
+        }
+    }
+
+    // 放置：地面扬起一圈淡尘。
+    public void SpawnPlaceDust(int wx, int wz, int wy) {
+        this.Spawn(wx, wz, wy, 14, VoxelPalette.Dust, 46.0f, 62.0f, 4, 0.9f);
+    }
+
+    // 破坏：该类方块的碎屑。
+    public void SpawnDebris(int wx, int wz, int wy, int kind) {
+        this.Spawn(wx, wz, wy, 12, VoxelPalette.DebrisOf(kind),
+            78.0f, 96.0f, 4, 0.75f);
+    }
+
+    public void Update(float dt) {
+        for (int i = 0; i < this.parts.Count; i = i + 1) {
+            VoxelParticle p = this.parts[i];
+            if (!p.active) { continue; }
+            p.life = p.life - dt;
+            if (p.life <= 0.0f) {
+                p.active = false;
+                continue;
+            }
+            p.ox = p.ox + p.vx * dt;
+            p.oy = p.oy + p.vy * dt;
+            // 重力（屏幕 y 向下为正）。
+            p.vy = p.vy + 340.0f * dt;
+            // 阻尼。
+            p.vx = p.vx * (1.0f - 1.6f * dt);
+        }
+    }
+
+    // 画粒子：越接近死亡越小越淡（方块碎屑收缩）。
+    public void Draw(Canvas c, VoxelIso iso) {
+        for (int i = 0; i < this.parts.Count; i = i + 1) {
+            VoxelParticle p = this.parts[i];
+            if (!p.active) { continue; }
+            float t = p.life / p.maxLife;
+            if (t < 0.0f) { t = 0.0f; }
+            int cx = iso.SX(p.wx, p.wz) + (int)p.ox;
+            int cy = iso.SY(p.wx, p.wz, p.wy) + (int)p.oy;
+            int s = (int)(p.size * (0.4f + t * 0.6f));
+            if (s < 1) { s = 1; }
+            int col = p.color;
+            if (t < 0.45f) {
+                col = VoxelFade(col, (int)(t / 0.45f * 255.0f));
+            }
+            VoxelPaint.Fill(c, cx - s / 2, cy - s / 2, s, s, col);
+        }
+    }
+
+    // 颜色整体乘一个系数（保留 alpha 的比例）。
+    static int VoxelFade(int color, int mul) {
+        if (mul < 0) { mul = 0; }
+        if (mul > 255) { mul = 255; }
+        int a = (color >> 24) & 0xFF;
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        r = r * mul / 255;
+        g = g * mul / 255;
+        b = b * mul / 255;
+        a = a * mul / 255;
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    // 稳定的伪随机（0..1）。
+    static float Rand(int a, int b, int seed) {
+        int h = (a & 63) * 131 + (b & 63) * 197 + (seed & 31) * 17;
+        h = h & 0xFFFF;
+        h = (h * 40503) & 0x7FFF;
+        h = h ^ (h >> 7);
+        h = (h * 40503) & 0x7FFF;
+        h = h ^ (h >> 5);
+        return (float)(h & 0x7FFF) / 32767.0f;
+    }
+}

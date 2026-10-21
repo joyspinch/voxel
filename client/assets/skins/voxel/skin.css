@@ -1,0 +1,147 @@
+/* skin.css — 立方世界 · VOXEL 的矿洞皮肤包。
+ *
+ * 位置：build/voxel/skins/voxel/skin.css（exe 同级），由
+ * client/assets/skins/voxel/skin.css 拷贝而来；启动时
+ * `host.App().UseSkin("voxel")` 应用（必须在 UseSkin("dark") 之后）。
+ *
+ * 令牌名照 packages/Zan.Gui/src/Gui/skins/base.css 的清单抄，不自造：
+ * 颜色用 #AARRGGBB（与画布 0xAARRGGBB 同一套），度量用十进制。
+ *
+ * 配色语义：石灰岩灰（面板与底色）+ 铜绿（次要强调）+ 矿灯橙（主强调）。
+ * 这些色值与 client/src/VoxelPalette.zan 一一对应——画布上的 UI 与标准库
+ * 控件（设置浮层）是两套渲染路径，靠同一份色值保持观感统一。
+ */
+
+:root {
+  --name: "矿洞";
+  --order: 20;
+  --base: dark;
+  --dark: 1;
+
+  /* --- 主色：矿灯橙 --- */
+  --primary: #FFE8862B;
+  --primary-hover: #FFFFA955;
+  --primary-pressed: #FF8E5414;
+
+  /* --- 状态色 --- */
+  --info: #FF6FBBA0;
+  --info-hover: #FF8FD8BE;
+  --info-pressed: #FF4E8C7A;
+  --success: #FF8FD8A6;
+  --success-hover: #FFA8E4BB;
+  --success-pressed: #FF6FB186;
+  --warning: #FFF0C060;
+  --warning-hover: #FFF8D68C;
+  --warning-pressed: #FFC08E3C;
+  --error: #FFE05A3E;
+  --error-hover: #FFEE8068;
+  --error-pressed: #FFB04228;
+
+  /* --- 文字：矿灯米白 / 石灰岩暖灰 --- */
+  --text-primary: #FFF2E4C6;
+  --text-secondary: #FFC2AE8C;
+  --text-tertiary: #FF8E7C64;
+  --text-disabled: #FF5A5044;
+  --text-inverse: #FF1A1208;
+
+  /* --- 表面：石灰岩三层 --- */
+  --bg-primary: #FF12100D;
+  --bg-secondary: #FF241E17;
+  --bg-tertiary: #FF2E261D;
+  --bg-hover: #FF3A3126;
+  --bg-active: #FF1C1711;
+  --bg-disabled: #FF1E1913;
+
+  /* --- 描边：暖石灰 + 铜绿高亮 --- */
+  --border-primary: #FF6E5A44;
+  --border-secondary: #FF463A2C;
+  --border-hover: #FF9C8262;
+  --border-focus: #FFE8862B;
+  --divider: #FF463A2C;
+
+  /* --- 浮层与投影 --- */
+  --shadow-color: #B3000000;
+  --overlay: #C0000000;
+  --scrim: #B3000000;
+  --on-scrim: #FFF2E4C6;
+  --tooltip-bg: #FF241E17;
+  --tooltip-border: #FF6E5A44;
+  --tooltip-text: #FFF2E4C6;
+  --scrollbar: #FF463A2C;
+  --scrollbar-hover: #FF6E5A44;
+
+  /* --- 圆角：CSS 变量 + 进 Theme 的那组 ---
+   * --radius-*         是 CSS 变量，供本皮肤自己的规则消费；
+   * --border-radius-*  才会进 Theme（映射到 borderRadiusSmall…），
+   *                     base.css 与控件代码默认值都跟它走。两者都写。 */
+  --radius-small: 4;
+  --radius-medium: 8;
+  --radius-large: 12;
+  --border-radius-small: 4;
+  --border-radius-medium: 8;
+  --border-radius-large: 12;
+
+  /* --- 字号：正文 14，标题略大 --- */
+  --font-size-medium: 14;
+  --font-size-large: 16;
+}
+
+/* ---- 按钮：石灰岩面 + 铜边，悬停亮铜绿，按下压暗 ---------------------- */
+button {
+  background: linear-gradient(#FF3A3126, #FF221C15);
+  color: var(--text-primary);
+  border: 1 var(--border-primary);
+  border-radius: var(--radius-small);
+}
+button:hover {
+  background: linear-gradient(#FF4C4032, #FF2E261D);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+button:active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+/* 当前选中的档位：矿灯橙实心 + 深色字。 */
+button.primary {
+  background: linear-gradient(#FFF2A24A, #FFD2761F);
+  color: var(--text-inverse);
+  border: 1 var(--primary);
+}
+button.primary:hover {
+  background: linear-gradient(#FFFFC06A, #FFE8862B);
+  color: var(--text-inverse);
+  border-color: var(--primary-hover);
+}
+button.primary:active {
+  background: var(--primary-pressed);
+  color: var(--text-inverse);
+  border-color: var(--primary-pressed);
+}
+button:disabled {
+  background: var(--bg-disabled);
+  color: var(--text-disabled);
+  border: 1 var(--border-secondary);
+}
+
+/* ---- 文字 ------------------------------------------------------------ */
+label {
+  color: var(--text-primary);
+  font-size: var(--font-size-medium);
+}
+
+/* ---- 设置浮层的内容盒（SettingsOverlay 的 class="card"） -------------
+ * 底色不再是系统默认黑卡：竖向渐变的石灰岩板 + 铜框 + 圆角 + 投影。
+ * 渐变让面板有"被矿灯照到的上沿"，系统控件那种死平的黑底一眼就分得开。 */
+panel.card, card {
+  background: linear-gradient(#FF3A3126, #FF221C15);
+  color: var(--text-primary);
+  border: 2 #8A6A3A;
+  border-radius: var(--radius-large);
+  box-shadow: 0 8 22 var(--shadow-color);
+  padding: var(--padding-large);
+}
+panel.card::title, card::title {
+  color: #FFFFD98A;
+}

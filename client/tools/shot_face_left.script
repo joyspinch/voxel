@@ -1,0 +1,10 @@
+# UiDriver 脚本：截「角色朝左」的画面。
+#
+# 用法见 client/tools/shot_face_right.script（同一套约定）。
+# 按 A 向左走一格 → 朝向变成 -x（等距投影里 -x 在屏幕左上 = 朝左那一帧）。
+move 640 500
+wait 400
+keydown 65
+wait 900
+keyup 65
+wait 2000

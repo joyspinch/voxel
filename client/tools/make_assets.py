@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """make_assets.py —— 立方世界 · VOXEL 的素材流水线。
 
-三段：
+四段：
   1. **AI 原图后处理**（build/raw/*.png）：抠黑底（洪泛）→ 裁边 → 缩放到
      显示尺寸 2 倍 → 存入 client/assets/。原图不留在项目里。
-  2. **程序化等距方块贴图**：像素画风格的等距立方体（顶面 + 左右侧面，
-     三面亮度不同才有体积感），画在 64×64 显示分辨率上，NEAREST 放大 2 倍
-     入库（运行时缩回 64×64 正好还原原始像素，边缘不糊）。
-  3. **音效合成**：Python 直接写 WAV（22050Hz / 16bit / 单声道）。
+  2. **朝向精灵表**：玩家出**两帧**（0=原图朝右，1=水平镜像朝左）。引擎运行时
+     转不了图（Canvas.BlitImage 只有源矩形，没有旋转也没有水平翻转），所以
+     方向只能离线烘焙。
+  3. **程序化等距方块贴图 + 地面贴花**：像素画风格的等距立方体（顶面 +
+     左右侧面，三面亮度不同才有体积感），画在 64×64 显示分辨率上，NEAREST
+     放大 2 倍入库；地面贴花（裂缝/苔藓/矿脉）与方块顶面同一套几何，
+     叠上去严丝合缝。
+  4. **程序化 UI 底板与投影**：九宫格面板/按钮底板、落地投影（九宫格要求
+     四角的圆弧完整落在角切片内、中间必须能拉伸，程序化画更准也更可复现）。
+  5. **音效合成**：Python 直接写 WAV（22050Hz / 16bit / 单声道）。
 
 用法：python client/tools/make_assets.py [--raw build/raw]
 """
@@ -15,12 +21,13 @@
 import argparse
 import math
 import os
+import random
 import struct
 import sys
 import wave
 from collections import deque
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ASSETS = os.path.join(ROOT, "client", "assets")
@@ -30,6 +37,35 @@ TILE = 64          # 显示分辨率：等距方块贴图 64×64
 BLOCK_W = 64       # 显示尺寸：等距方块 64 宽 × 64 高
 PLAYER_W = 48      # 玩家立绘显示尺寸 48×64
 PLAYER_H = 64
+PLAYER_FRAME = (96, 128)   # 玩家两帧精灵表的单帧像素（显示尺寸的 2 倍）
+
+# ---- 色板（与 client/src/VoxelPalette.zan 同一套语义色）------------------
+C_BOARD_TOP = (0x2E, 0x26, 0x1D)      # 面板：石灰岩灰
+C_BOARD_BOTTOM = (0x1C, 0x17, 0x11)
+C_BOARD_EDGE = (0x8A, 0x6A, 0x3A)     # 暖石灰外框
+C_BOARD_INNER = (0x4E, 0x8C, 0x7A)    # 铜绿内框线
+C_RIVET = (0xE8, 0x86, 0x2B)          # 矿灯橙铆钉
+
+C_BAR_TOP = (0x26, 0x20, 0x18)
+C_BAR_BOTTOM = (0x12, 0x0F, 0x0B)
+C_BAR_EDGE = (0xE8, 0x86, 0x2B)       # 顶栏下沿的矿灯橙
+
+C_SLOT_TOP = (0x2E, 0x26, 0x1D)
+C_SLOT_BOTTOM = (0x1A, 0x16, 0x10)
+C_SLOT_EDGE = (0x5A, 0x4A, 0x38)
+
+C_BTN_TOP = (0x3A, 0x31, 0x26)
+C_BTN_BOTTOM = (0x22, 0x1C, 0x15)
+C_BTN_EDGE = (0x6E, 0x5A, 0x44)
+C_BTN_HOVER_TOP = (0x4A, 0x40, 0x32)
+C_BTN_HOVER_BOTTOM = (0x2C, 0x25, 0x1C)
+C_BTN_HOVER_EDGE = (0x9C, 0x82, 0x62)
+C_BTN_PRESSED_TOP = (0x1E, 0x19, 0x12)
+C_BTN_PRESSED_BOTTOM = (0x12, 0x0E, 0x0A)
+C_BTN_PRESSED_EDGE = (0xE8, 0x86, 0x2B)
+C_BTN_PRIMARY_TOP = (0xF2, 0x92, 0x33)
+C_BTN_PRIMARY_BOTTOM = (0xC4, 0x68, 0x1C)
+C_BTN_PRIMARY_EDGE = (0x5E, 0x34, 0x0C)
 
 
 # --------------------------------------------------------------------------
@@ -159,7 +195,33 @@ def process_background(src, dst, w, h):
 
 
 # --------------------------------------------------------------------------
-# 2. 程序化等距方块贴图
+# 2. 朝向精灵表
+# --------------------------------------------------------------------------
+
+def facing_sheet(src, dst, frame_size):
+    """两帧精灵表：第 0 帧 = 原图（朝右），第 1 帧 = 水平镜像（朝左）。
+
+    取帧规则（写进 ASSETS.md，断言用例按它钉住）：
+        帧索引 = 0 → 朝右，1 → 朝左
+        源矩形 = (索引 * 帧宽, 0, 帧宽, 帧高)
+    镜像帧同样走一遍抠底/柔化（镜像本身不脏，但入库口径统一）。
+    """
+    if not os.path.exists(src):
+        print("MISSING", src)
+        return False
+    img = flood_remove_black(Image.open(src))
+    img = trim(img)
+    img = fit_into(img, frame_size[0], frame_size[1])
+    fw, fh = frame_size
+    sheet = Image.new("RGBA", (fw * 2, fh), (0, 0, 0, 0))
+    sheet.paste(img, (0, 0))
+    sheet.paste(img.transpose(Image.FLIP_LEFT_RIGHT), (fw, 0))
+    save_rgba(sheet, dst)
+    return True
+
+
+# --------------------------------------------------------------------------
+# 3. 程序化等距方块贴图
 # --------------------------------------------------------------------------
 
 def _hash(x, y, seed):
@@ -289,7 +351,189 @@ def make_block(name, top_fn, side_fn, seed):
 
 
 # --------------------------------------------------------------------------
-# 3. 音效合成
+# 4. 地面贴花（低频结构：裂缝 / 苔藓 / 矿脉）
+# --------------------------------------------------------------------------
+#
+# 贴花与方块贴图**同一套几何**：都在 64×64 的显示分辨率上作画，NEAREST
+# 放大 2 倍入库，运行时按方块贴图同样的位置与尺寸贴上去——严丝合缝。
+#
+# 顶面菱形的四个顶点：N(32,0) / E(64,16) / S(32,32) / W(0,16)。
+# (u,v) ∈ [0,1]² 是"菱形内的方格坐标"，仿射映射到画布：
+#     p = N + u*(E-N) + v*(W-N) = (32 + 32u - 32v, 16u + 16v)
+
+
+def _iso_pt(u, v):
+    return (32.0 + 32.0 * u - 32.0 * v, 16.0 * u + 16.0 * v)
+
+
+def _make_decal(kind):
+    """在 64×64 画布上画一张顶面贴花（只占顶面菱形那块）。"""
+    rnd = random.Random({"crack": 11, "moss": 23, "vein": 37}[kind])
+    img = Image.new("RGBA", (TILE, TILE), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    if kind == "crack":
+        # 两条裂缝：一条贯穿、一条分支。深色沟 + 下侧一道亮边（受光的唇）。
+        seams = [(0.04, 0.40, 0.96, 0.58), (0.30, 0.08, 0.58, 0.40)]
+        for u0, v0, u1, v1 in seams:
+            pts = []
+            n = 8
+            for i in range(n + 1):
+                t = i / float(n)
+                u = u0 + (u1 - u0) * t + (rnd.random() - 0.5) * 0.06
+                v = v0 + (v1 - v0) * t + (rnd.random() - 0.5) * 0.06
+                pts.append(_iso_pt(u, v))
+            d.line(pts, fill=(16, 12, 8, 225), width=2)
+            lip = [(p[0], p[1] + 1.4) for p in pts]
+            d.line(lip, fill=(214, 200, 164, 80), width=1)
+    elif kind == "moss":
+        # 苔藓成片（少而大的斑），不是满地碎点——高频噪点看着脏。
+        for _ in range(7):
+            u = rnd.random()
+            v = rnd.random()
+            edge = min(u, 1.0 - u, v, 1.0 - v)
+            if edge > 0.22:
+                # 往最近的边上拉一点（但别全挤在一角）。
+                d_u = u - 0.14 if u < 0.5 else u + 0.14
+                d_v = v - 0.14 if v < 0.5 else v + 0.14
+                if abs(d_u - 0.5) < abs(d_v - 0.5):
+                    u = d_u
+                else:
+                    v = d_v
+            x, y = _iso_pt(u, v)
+            rx = 7 + rnd.random() * 6
+            ry = 3.5 + rnd.random() * 3
+            d.ellipse([x - rx, y - ry, x + rx, y + ry],
+                      fill=(42, 92, 36, 215))
+            d.ellipse([x - rx * 0.55, y - ry * 0.6, x + rx * 0.4, y + ry * 0.4],
+                      fill=(102, 152, 64, 175))
+    else:
+        # 矿脉：几道发亮的晶体条纹。
+        for _ in range(3):
+            u0 = rnd.random() * 0.7
+            v0 = rnd.random() * 0.7
+            pts = []
+            n = 5
+            for i in range(n + 1):
+                t = i / float(n)
+                u = u0 + 0.30 * t + (rnd.random() - 0.5) * 0.05
+                v = v0 + 0.22 * t + (rnd.random() - 0.5) * 0.05
+                pts.append(_iso_pt(u, v))
+            d.line(pts, fill=(64, 200, 240, 205), width=2)
+            d.line(pts, fill=(226, 244, 255, 220), width=1)
+    return img
+
+
+def make_decal(name, kind):
+    img = _make_decal(kind)
+    big = img.resize((TILE * 2, TILE * 2), Image.NEAREST)
+    out = os.path.join(ASSETS, name)
+    big.save(out, optimize=True)
+    print("asset", name, big.size)
+
+
+# --------------------------------------------------------------------------
+# 5. 程序化 UI 底板与投影
+# --------------------------------------------------------------------------
+
+
+def rounded_gradient(size, radius, top, bottom):
+    """竖向渐变 + 圆角遮罩（外接圆角矩形以外的像素全透明）。"""
+    w, h = size
+    grad = Image.new("RGBA", (w, h))
+    d = ImageDraw.Draw(grad)
+    for y in range(h):
+        t = y / float(max(1, h - 1))
+        c = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3))
+        d.line([(0, y), (w, y)], fill=c + (255,))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1],
+                                           radius=radius, fill=255)
+    grad.putalpha(mask)
+    return grad
+
+
+def make_board(out_name, size=128, radius=16):
+    """面板底板（九宫格源）：石灰岩面 + 暖石灰外框 + 铜绿内框 + 角铆钉。
+
+    所有圆弧与铆钉都落在 32px 的角切片内，中间是纯渐变（可拉伸）。
+    """
+    img = rounded_gradient((size, size), radius, C_BOARD_TOP, C_BOARD_BOTTOM)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius,
+                        outline=C_BOARD_EDGE + (255,), width=3)
+    inner = 8
+    d.rounded_rectangle([inner, inner, size - 1 - inner, size - 1 - inner],
+                        radius=max(2, radius - inner),
+                        outline=C_BOARD_INNER + (200,), width=1)
+    rivet = 22
+    for cx, cy in ((rivet, rivet), (size - 1 - rivet, rivet),
+                   (rivet, size - 1 - rivet), (size - 1 - rivet, size - 1 - rivet)):
+        d.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=C_RIVET + (255,))
+        d.ellipse([cx - 1, cy - 2, cx + 1, cy - 1], fill=(255, 226, 170, 220))
+    save_png(img, out_name)
+
+
+def make_bar(out_name, size=(128, 64), radius=12):
+    """顶栏底板：深岩底 + 矿灯橙下沿（一条发光的矿灯带）。"""
+    w, h = size
+    img = rounded_gradient((w, h), radius, C_BAR_TOP, C_BAR_BOTTOM)
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, h - 4, w - 1, h - 1], fill=C_BAR_EDGE + (235,))
+    d.rectangle([0, h - 6, w - 1, h - 5], fill=C_BAR_EDGE + (90,))
+    save_png(img, out_name)
+
+
+def make_slot(out_name, size=(64, 64), radius=10):
+    """背包槽底板：凹进去的石槽。"""
+    img = rounded_gradient(size, radius, C_SLOT_TOP, C_SLOT_BOTTOM)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, size[0] - 1, size[1] - 1], radius=radius,
+                        outline=C_SLOT_EDGE + (220,), width=2)
+    d.rounded_rectangle([4, 4, size[0] - 5, size[1] - 5], radius=max(2, radius - 3),
+                        outline=(0, 0, 0, 90), width=1)
+    save_png(img, out_name)
+
+
+def make_button(out_name, top, bottom, edge, size=(64, 48), radius=8):
+    """按钮底板（九宫格源）：渐变面 + 2px 描边 + 顶部一道受光高光。"""
+    img = rounded_gradient(size, radius, top, bottom)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, size[0] - 1, size[1] - 1], radius=radius,
+                        outline=edge + (255,), width=2)
+    d.line([(radius + 2, 3), (size[0] - radius - 2, 3)],
+           fill=(255, 255, 255, 34), width=1)
+    save_png(img, out_name)
+
+
+def make_shadow(out_name, size=(64, 32), peak=190):
+    """落地投影：软边椭圆（中心最实，边缘淡出）。"""
+    w, h = size
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    px = img.load()
+    cx = (w - 1) / 2.0
+    cy = (h - 1) / 2.0
+    rx = w / 2.0
+    ry = h / 2.0
+    for y in range(h):
+        for x in range(w):
+            dx = (x - cx) / rx
+            dy = (y - cy) / ry
+            d = math.sqrt(dx * dx + dy * dy)
+            if d >= 1.0:
+                continue
+            a = (1.0 - d) ** 1.7
+            px[x, y] = (6, 8, 14, int(peak * a))
+    save_png(img, out_name)
+
+
+def save_png(img, out_name):
+    out = os.path.join(ASSETS, out_name)
+    img.save(out, optimize=True)
+    print("asset", out_name, img.size)
+
+
+# --------------------------------------------------------------------------
+# 6. 音效合成
 # --------------------------------------------------------------------------
 
 RATE = 22050
@@ -405,8 +649,9 @@ def main():
     os.makedirs(SFX, exist_ok=True)
 
     # AI 原图 → 入库资产
-    process_ai(os.path.join(raw, "player.png"),
-               os.path.join(ASSETS, "player.png"), PLAYER_W, PLAYER_H)
+    # 玩家走**两帧精灵表**：0 帧朝右（原图），1 帧朝左（水平镜像）。
+    facing_sheet(os.path.join(raw, "player.png"),
+                 os.path.join(ASSETS, "player_sheet.png"), PLAYER_FRAME)
     process_plate(os.path.join(raw, "title.png"),
                   os.path.join(ASSETS, "title.png"), 480, 120)
     process_plate(os.path.join(raw, "blueprint.png"),
@@ -417,6 +662,30 @@ def main():
     # 程序化等距方块
     for name, top_fn, side_fn, seed in BLOCKS:
         make_block(name, top_fn, side_fn, seed)
+
+    # 地面贴花（低频结构）
+    make_decal("decal_crack.png", "crack")
+    make_decal("decal_moss.png", "moss")
+    make_decal("decal_vein.png", "vein")
+
+    # 程序化 UI 底板与投影
+    make_board("ui_board.png")
+    make_bar("ui_bar.png")
+    make_slot("ui_slot.png")
+    make_button("ui_button.png", C_BTN_TOP, C_BTN_BOTTOM, C_BTN_EDGE)
+    make_button("ui_button_hover.png", C_BTN_HOVER_TOP, C_BTN_HOVER_BOTTOM,
+                C_BTN_HOVER_EDGE)
+    make_button("ui_button_pressed.png", C_BTN_PRESSED_TOP, C_BTN_PRESSED_BOTTOM,
+                C_BTN_PRESSED_EDGE)
+    make_button("ui_button_primary.png", C_BTN_PRIMARY_TOP, C_BTN_PRIMARY_BOTTOM,
+                C_BTN_PRIMARY_EDGE)
+    make_shadow("shadow.png")
+
+    # 单帧玩家贴图已被两帧精灵表取代（清掉，别留两套口径）。
+    dead = os.path.join(ASSETS, "player.png")
+    if os.path.exists(dead):
+        os.remove(dead)
+        print("removed  player.png")
 
     # 音效
     _write_wav("place", sfx_place())

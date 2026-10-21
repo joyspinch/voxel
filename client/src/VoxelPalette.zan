@@ -1,0 +1,101 @@
+// 立方世界 · VOXEL 的色板：全项目只此一份颜色定义。
+//
+// 判据（docs/GAME_UI_AND_FACING.md 第二节）：同一个语义只允许在这里挑一次
+// 颜色——底色/前景/强调/危险/成功/面板底/描边各一个值，渲染层与 HUD 层都从
+// 这里取，不允许三个文件各挑一个"差不多的橙"。
+//
+// 配色：矿洞风——石灰岩灰（面板与地面）+ 铜绿（次要强调）+ 矿灯橙（主强调）。
+//
+// 皮肤包（client/assets/skins/voxel/skin.css）里的同名色值必须与这里一致：
+// 画布上的 UI 与标准库控件（设置浮层）是两套渲染路径，靠同一份色值保持观感
+// 统一。
+public class VoxelPalette {
+    // ----- 底色 / 画面 ---------------------------------------------------
+    public const int BgDeep = 0xFF12100D;       // 菜单遮罩底（洞底黑）
+    public const int BgStage = 0xFF2A2620;      // 场景兜底底色
+    public const int BarBg = 0xE01A1611;        // 顶栏底槽
+    public const int SlotBg = 0xFF241E17;      // 背包槽底
+
+    // ----- 面板底 ---------------------------------------------------------
+    public const int PanelBg = 0xFF241E17;      // 结算面板底
+    public const int PanelBgSoft = 0xFF2E261D;  // HUD 面板底
+    public const int PlateBody = 0xFF2A231C;    // UI 底板兜底色（贴图缺失时）
+    public const int PlateEdge = 0xFF8A6A3A;    // UI 底板描边兜底色
+
+    // ----- 前景文字 -------------------------------------------------------
+    public const int FgPrimary = 0xFFF2E4C6;    // 正文（矿灯米白）
+    public const int FgSecondary = 0xFFC2AE8C;  // 次要说明
+    public const int FgTertiary = 0xFF8E7C64;   // 弱化提示
+    public const int FgInverse = 0xFF1A1208;    // 橙底上的深色字
+    public const int FgShadow = 0xD0100C08;     // 文字投影（压在画面上也能读）
+
+    // ----- 强调（矿灯橙）-------------------------------------------------
+    public const int Accent = 0xFFE8862B;
+    public const int AccentBright = 0xFFFFA955;
+    public const int AccentDim = 0xFF8E5414;
+    public const int AccentText = 0xFFFFD98A;   // 标题金
+
+    // ----- 铜绿（次要强调）------------------------------------------------
+    public const int Copper = 0xFF4E8C7A;
+    public const int CopperBright = 0xFF6FBBA0;
+    public const int CopperDim = 0xFF2E5A4E;
+
+    // ----- 描边 -----------------------------------------------------------
+    public const int Edge = 0xFF6E5A44;         // 常规描边（石灰岩暖灰）
+    public const int EdgeBright = 0xFF9C8262;   // 高亮描边
+    public const int EdgeDark = 0xFF17120D;     // 轮廓暗线
+
+    // ----- 语义色 ---------------------------------------------------------
+    public const int Danger = 0xFFE05A3E;
+    public const int Success = 0xFF8FD8A6;
+    public const int Warning = 0xFFF0C060;
+    public const int Info = 0xFF6FBBA0;
+
+    // ----- 场景：阴影与接触阴影 -------------------------------------------
+    public const int Shadow = 0x66000000;       // 落地投影（软椭圆）
+    public const int ContactShadow = 0x66000000;// 相邻块之间的暗边
+    public const int ContactSoft = 0x34000000;  // 同高接缝的弱暗边
+    public const int RimLight = 0x60FFD9A0;     // 崖沿受光边（亮）
+    public const int RimLightCool = 0x30BFE6D2; // 背光侧的冷边
+
+    // ----- 建造光标 -------------------------------------------------------
+    public const int CursorOk = 0xFFFFE27A;
+    public const int CursorBad = 0xFFFF7A6A;
+    public const int CursorFill = 0x40FFFFFF;
+    public const int CursorPost = 0x70FFE27A;
+
+    // ----- 贴花（地面结构）------------------------------------------------
+    public const int MossColor = 0xFF4E7A3A;
+    public const int VeinColor = 0xFF56E2FF;
+
+    // ----- 粒子 -----------------------------------------------------------
+    public const int Dust = 0xFFD8C4A0;         // 落地尘
+    public const int DebrisGrass = 0xFF7C8B5A;
+    public const int DebrisStone = 0xFF80828A;
+    public const int DebrisWood = 0xFF8A5F33;
+    public const int DebrisOre = 0xFF4A6478;
+
+    // ----- 方块兜底色（贴图缺失时的纯色块）-------------------------------
+    public const int BlockGrass = 0xFF7C8B5A;
+    public const int BlockStone = 0xFF80828A;
+    public const int BlockWood = 0xFF8A5F33;
+    public const int BlockOre = 0xFF4A6478;
+
+    // 某类方块的碎屑色。
+    public static int DebrisOf(int kind) {
+        if (kind == 1) { return VoxelPalette.DebrisGrass; }
+        if (kind == 2) { return VoxelPalette.DebrisStone; }
+        if (kind == 3) { return VoxelPalette.DebrisWood; }
+        if (kind == 4) { return VoxelPalette.DebrisOre; }
+        return VoxelPalette.Dust;
+    }
+
+    // 某类方块的兜底色。
+    public static int BlockOf(int kind) {
+        if (kind == 1) { return VoxelPalette.BlockGrass; }
+        if (kind == 2) { return VoxelPalette.BlockStone; }
+        if (kind == 3) { return VoxelPalette.BlockWood; }
+        if (kind == 4) { return VoxelPalette.BlockOre; }
+        return VoxelPalette.BlockStone;
+    }
+}

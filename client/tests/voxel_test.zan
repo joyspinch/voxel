@@ -334,7 +334,97 @@ public class VoxelTest {
         }
     }
 
-    // ----- 七、时间格式化 ---------------------------------------------------
+    // ----- 七、朝向（逻辑朝向 → 取帧索引）--------------------------------
+    //
+    // 判据（docs/GAME_UI_AND_FACING.md 第三节）：映射必须是纯函数，且在
+    // 断言用例里钉住——左右两帧索引不同、向左走后面向变 false。
+    static void TestFacing() {
+        // 左右两帧索引不同
+        Eq(VoxelFacing.Frame(true), VoxelFacing.FrameRight, "朝右取第 0 帧");
+        Eq(VoxelFacing.Frame(false), VoxelFacing.FrameLeft, "朝左取第 1 帧");
+        Ok(VoxelFacing.Frame(true) != VoxelFacing.Frame(false),
+            "左右两帧索引不同");
+        Ok(VoxelFacing.SrcX(true) != VoxelFacing.SrcX(false),
+            "左右两帧的源矩形不同");
+        // 源矩形是源图像素（帧宽的整数倍），不是显示像素
+        Eq(VoxelFacing.SrcX(true), 0, "第 0 帧源起点为 0");
+        Eq(VoxelFacing.SrcX(false), VoxelFacing.PlayerFrameW,
+            "第 1 帧源起点是一帧宽");
+        Eq(VoxelFacing.Frames, 2, "精灵表两帧");
+        // 逻辑朝向 → 屏幕朝向：+x / -z 朝右，-x / +z 朝左
+        Ok(VoxelFacing.FacingRight(VoxelFacing.East), "+x 朝右");
+        Ok(!VoxelFacing.FacingRight(VoxelFacing.West), "-x 朝左");
+        Ok(!VoxelFacing.FacingRight(VoxelFacing.South), "+z 朝左");
+        Ok(VoxelFacing.FacingRight(VoxelFacing.North), "-z 朝右");
+        // 逻辑朝向 → 取帧索引
+        Eq(VoxelFacing.FrameOf(VoxelFacing.East), VoxelFacing.FrameRight,
+            "+x 走朝右那一帧");
+        Eq(VoxelFacing.FrameOf(VoxelFacing.West), VoxelFacing.FrameLeft,
+            "-x 走朝左那一帧");
+        Eq(VoxelFacing.FrameOf(VoxelFacing.South), VoxelFacing.FrameLeft,
+            "+z 走朝左那一帧");
+        Eq(VoxelFacing.FrameOf(VoxelFacing.North), VoxelFacing.FrameRight,
+            "-z 走朝右那一帧");
+        // 走一格 → 朝向（移动是朝向的唯一出口）
+        Eq(VoxelFacing.FacingForStep(1, 0), VoxelFacing.East, "向右走朝 +x");
+        Eq(VoxelFacing.FacingForStep(-1, 0), VoxelFacing.West, "向左走朝 -x");
+        Eq(VoxelFacing.FacingForStep(0, 1), VoxelFacing.South, "向下走朝 +z");
+        Eq(VoxelFacing.FacingForStep(0, -1), VoxelFacing.North, "向上走朝 -z");
+        Eq(VoxelFacing.FacingForStep(0, 0), -1, "没动就不改朝向");
+        // 核心判据：向左走之后，面向变 false，取到的帧索引也变了
+        int before = VoxelFacing.Frame(VoxelFacing.FacingRight(
+            VoxelFacing.East));
+        int f = VoxelFacing.FacingForStep(-1, 0);
+        bool facingRight = VoxelFacing.FacingRight(f);
+        Ok(!facingRight, "向左走后面向变 false");
+        Ok(VoxelFacing.Frame(facingRight) != before,
+            "向左走以后取到的帧索引变了");
+        Eq(VoxelFacing.Frame(facingRight), VoxelFacing.FrameLeft,
+            "向左走取第 1 帧");
+        // 屏幕方向：+x 在屏幕右下、+z 在屏幕左下
+        Ok(VoxelFacing.DirX(VoxelFacing.East) > 0
+            && VoxelFacing.DirY(VoxelFacing.East) > 0, "+x 在屏幕右下");
+        Ok(VoxelFacing.DirX(VoxelFacing.South) < 0
+            && VoxelFacing.DirY(VoxelFacing.South) > 0, "+z 在屏幕左下");
+    }
+
+    // ----- 八、地面结构（低频贴花）---------------------------------------
+    static void TestTerrain() {
+        // 纯函数：同样的格子永远给同样的贴花
+        for (int i = 0; i < 32; i = i + 1) {
+            int x = i;
+            int z = (i * 7) % 32;
+            Eq(VoxelTerrain.DecalAt(x, z), VoxelTerrain.DecalAt(x, z),
+                "贴花是纯函数");
+        }
+        // 贴花种类合法
+        int cracks = 0;
+        int moss = 0;
+        int vein = 0;
+        for (int x = 0; x < VoxelWorld.SizeX; x = x + 1) {
+            for (int z = 0; z < VoxelWorld.SizeZ; z = z + 1) {
+                int d = VoxelTerrain.DecalAt(x, z);
+                Ok(d >= VoxelTerrain.DecalNone && d <= VoxelTerrain.DecalVein,
+                    "贴花种类合法");
+                if (d == VoxelTerrain.DecalCrack) { cracks = cracks + 1; }
+                if (d == VoxelTerrain.DecalMoss) { moss = moss + 1; }
+                if (d == VoxelTerrain.DecalVein) { vein = vein + 1; }
+            }
+        }
+        // 低频结构：三种贴花都出现，但不是每格都有（不是高频噪点）
+        Ok(cracks > 0, "有裂缝");
+        Ok(moss > 0, "有苔藓");
+        Ok(vein > 0, "有矿脉");
+        Ok(cracks + moss + vein < VoxelWorld.SizeX * VoxelWorld.SizeZ / 2,
+            "贴花覆盖率不到一半（低频，不是噪点）");
+        // 噪声在 0..1 之间且随格变化
+        float n0 = VoxelTerrain.Noise(3, 5, 4, 91);
+        Ok(n0 >= 0.0f && n0 <= 1.0f, "噪声在 0..1");
+        Ok(VoxelTerrain.Noise(3, 5, 4, 91) == n0, "噪声是纯函数");
+        Ok(VoxelTerrain.Noise(4, 5, 4, 91) != n0, "噪声随格子变化");
+    }
+
+    // ----- 九、时间格式化 ---------------------------------------------------
 
     static void TestFormat() {
         EqS(VoxelPaint.FmtTime(0), "0:00", "0 毫秒");
@@ -350,6 +440,8 @@ public class VoxelTest {
         TestIso();
         TestWalkRules();
         TestSeededRuns();
+        TestFacing();
+        TestTerrain();
         TestFormat();
         Console.WriteLine("voxel_test checks=" + Convert.ToString(checks)
             + " failures=" + Convert.ToString(failures));

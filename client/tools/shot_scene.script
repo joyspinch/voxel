@@ -1,0 +1,33 @@
+# UiDriver 脚本：截「工地场景」的画面（含放置反馈：落地尘）。
+#
+# 用法见 client/tools/shot_face_right.script（同一套约定）。
+#
+# 先向右走一格（顺带把朝向摆成朝右），再连点三次放置方块——每次放置后用
+# E 抬高建造高度，让三次都落在不同的格上。
+#
+# 时序：UiDriver 的时间轴比墙钟慢一截（每条指令都要让出一帧），所以脚本
+# 里的动作要排在前面；截图秒数要落在「最后一次点击 + 扬尘最浓」那一刻。
+move 640 500
+wait 300
+keydown 68
+wait 500
+keyup 68
+wait 250
+keydown 69
+wait 150
+keyup 69
+wait 150
+click 640 400
+wait 200
+keydown 69
+wait 150
+keyup 69
+wait 150
+click 640 400
+wait 200
+keydown 69
+wait 150
+keyup 69
+wait 150
+click 640 400
+wait 3000

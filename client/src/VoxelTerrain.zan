@@ -1,0 +1,78 @@
+// 地面结构：低频有组织的地表纹理（裂缝 / 苔藓 / 矿脉），不是高频噪点。
+//
+// 判据（docs/GAME_UI_AND_FACING.md 第四节）：地面不能是一整片同色方块。
+// 做法是**低频**的：
+//   裂缝 —— 沿 (x-z) 方向的一条斜缝，每隔几格断一次（有走向，不是雪花）
+//   苔藓 —— 4×4 格尺度的平滑值噪声斑块（大块面积，不是逐格噪点）
+//   矿脉 —— 沿 (x+2z) 方向的另一条斜线，比裂缝更稀
+//
+// 全部是纯函数（同样的 (x,z) 永远给同样的结果），所以断言用例能钉住，
+// 存档/回放也不会漂。
+public class VoxelTerrain {
+    public const int DecalNone = 0;
+    public const int DecalCrack = 1;
+    public const int DecalMoss = 2;
+    public const int DecalVein = 3;
+
+    // 贴花贴图（assets/decal_*.png）；找不到时返回空串（调用方跳过贴花）。
+    public string crackPath = "";
+    public string mossPath = "";
+    public string veinPath = "";
+
+    // 该格顶面上的贴花种类。纯函数。
+    public static int DecalAt(int x, int z) {
+        // 裂缝：一条斜缝，按段断开（断口让缝看起来像真的裂口）。
+        int seam = (x - z + 64) % 11;
+        if (seam == 0 && ((x + z) / 4) % 3 != 0) {
+            return VoxelTerrain.DecalCrack;
+        }
+        // 苔藓：低频斑块（4 格尺度的平滑噪声）。
+        if (VoxelTerrain.Noise(x, z, 4, 91) > 0.70f) {
+            return VoxelTerrain.DecalMoss;
+        }
+        // 矿脉：另一条更稀的斜线。
+        int v = (x + 2 * z + 128) % 19;
+        if (v == 0) {
+            return VoxelTerrain.DecalVein;
+        }
+        return VoxelTerrain.DecalNone;
+    }
+
+    // 某类贴花的贴图路径。
+    public string PathOf(int decal) {
+        if (decal == VoxelTerrain.DecalCrack) { return this.crackPath; }
+        if (decal == VoxelTerrain.DecalMoss) { return this.mossPath; }
+        if (decal == VoxelTerrain.DecalVein) { return this.veinPath; }
+        return "";
+    }
+
+    // 平滑值噪声（0..1）：格点随机值 + 双线性插值 + smoothstep。
+    // scale 是"一个噪声格 = 几格地块"（越大越低频）。
+    public static float Noise(int x, int z, int scale, int seed) {
+        if (scale <= 0) { scale = 1; }
+        int gx = x / scale;
+        int gz = z / scale;
+        float fx = (float)(x - gx * scale) / (float)scale;
+        float fz = (float)(z - gz * scale) / (float)scale;
+        float sx = fx * fx * (3.0f - 2.0f * fx);
+        float sz = fz * fz * (3.0f - 2.0f * fz);
+        float v00 = VoxelTerrain.Rand01(gx, gz, seed);
+        float v10 = VoxelTerrain.Rand01(gx + 1, gz, seed);
+        float v01 = VoxelTerrain.Rand01(gx, gz + 1, seed);
+        float v11 = VoxelTerrain.Rand01(gx + 1, gz + 1, seed);
+        float a = v00 + (v10 - v00) * sx;
+        float b = v01 + (v11 - v01) * sx;
+        return a + (b - a) * sz;
+    }
+
+    // 确定性哈希 → 0..1。乘数都取小值，避免 32 位整型溢出。
+    public static float Rand01(int x, int z, int seed) {
+        int h = (x & 63) * 131 + (z & 63) * 197 + (seed & 31) * 17;
+        h = h & 0xFFFF;
+        h = (h * 40503) & 0x7FFF;
+        h = h ^ (h >> 7);
+        h = (h * 40503) & 0x7FFF;
+        h = h ^ (h >> 5);
+        return (float)(h & 0x7FFF) / 32767.0f;
+    }
+}

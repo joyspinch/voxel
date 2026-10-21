@@ -16,7 +16,7 @@ if (-not $RawDir) { $RawDir = Join-Path $repo 'build/raw' }
 New-Item -ItemType Directory -Force -Path $RawDir | Out-Null
 
 $jobs = @(
-  @{ name = 'player'; prompt = 'pixel art voxel game character sprite, blocky cubic robot miner, front view full body, cyan visor helmet, orange work suit, holding a pickaxe, crisp clean edges, flat colors, centered, isolated on solid pure black background' },
+  @{ name = 'player'; prompt = 'pixel art voxel game character sprite, blocky cubic robot miner, three-quarter view clearly FACING RIGHT, body and cyan visor oriented to the right side of the image, orange work suit, pickaxe held over the right shoulder, full body standing, crisp clean edges, flat colors, no text, centered, isolated on solid pure black background' },
   @{ name = 'title'; prompt = 'ornate fantasy game title banner plaque, carved stone frame with golden rivets, empty dark center panel, wide horizontal shape, flat front view, centered, isolated on solid pure black background' },
   @{ name = 'bg_sky'; prompt = 'wide pixel art voxel landscape backdrop, gradient blue sky with soft clouds, distant blocky green hills and a few floating blocky islands, flat side-scrolling background, no characters, no text, full bleed' },
   @{ name = 'blueprint'; prompt = 'top-down flat drafting blueprint parchment sheet, aged tan paper with faint cyan grid lines and small technical marks, blank empty center, no text, no hands, isolated on solid pure black background' }

@@ -38,6 +38,7 @@ public class VoxelGame : IGuiHostLoop {
     public GameShell shell;
     public VoxelView view;
     public VoxelSfx sfx;
+    public VoxelFx fx;
     public VoxelPlans plans;
     public VoxelWorld world;
     public VoxelBuild build;
@@ -63,6 +64,7 @@ public class VoxelGame : IGuiHostLoop {
     public int lastButton;
     public int moveTimer;
     bool[] keys = new bool[256];
+    bool mouseDown;
     bool smokeMode;
     bool autoStart;
     int smokeFrames;
@@ -78,6 +80,7 @@ public class VoxelGame : IGuiHostLoop {
         this.shell = new GameShell();
         this.view = new VoxelView();
         this.sfx = new VoxelSfx();
+        this.fx = new VoxelFx();
         this.plans = new VoxelPlans();
         this.world = new VoxelWorld();
         this.build = new VoxelBuild(this.world);
@@ -175,6 +178,10 @@ public class VoxelGame : IGuiHostLoop {
 
     public void Start(GuiHost h) {
         this.host = h;
+        // 皮肤包（矿洞风）：必须在默认皮肤之后应用，否则会被盖回去。
+        // 皮肤目录在 exe 同级 skins/voxel/（构建时拷过去）。
+        h.App().UseSkin("dark");
+        h.App().UseSkin("voxel");
         h.Hud().Add(this.shell.Overlay().Root());
         if (this.smokeMode) {
             // 无头冒烟直接进工地：菜单那一帧不跑玩法，冒烟要跑到真玩法上。
@@ -201,11 +208,17 @@ public class VoxelGame : IGuiHostLoop {
             if (keycode >= 0 && keycode < 256) { this.keys[keycode] = false; }
             return;
         }
+        if (kind == 2) {
+            // 鼠标按下：按钮的"按下"态靠它。
+            this.mouseDown = true;
+            return;
+        }
         if (kind == 3) {
             // 同一次释放事件只处理一次（宿主可能重复投递同一事件）。
             int seq = h.App().window.EventSeq();
             if (seq == this.lastSeq) { return; }
             this.lastSeq = seq;
+            this.mouseDown = false;
             // keycode 是鼠标按钮号：0=左键（放置）、1=右键（破坏）。
             this.lastButton = keycode;
             this.OnClick(h.MouseX(), h.MouseY());
@@ -217,6 +230,7 @@ public class VoxelGame : IGuiHostLoop {
     public void Update(GuiHost h, int deltaMilliseconds) {
         this.shell.Overlay().Tick();
         this.sfx.Update(deltaMilliseconds);
+        this.fx.Update((float)deltaMilliseconds / 1000.0f);
         // 帧计数放在 Update：窗口不可见时宿主跳过渲染（Render 不跑），
         // 无头冒烟靠这个计数收尾。
         this.frames = this.frames + 1;
@@ -259,7 +273,9 @@ public class VoxelGame : IGuiHostLoop {
             bool hover = b.enabled && this.host != null
                 && this.host.MouseX() >= b.x && this.host.MouseX() < b.x + b.w
                 && this.host.MouseY() >= b.y && this.host.MouseY() < b.y + b.h;
-            this.view.DrawButton(c, b.label, b.x, b.y, b.w, b.h, b.enabled, hover, b.kind);
+            bool pressed = hover && this.mouseDown;
+            this.view.DrawButton(c, b.label, b.x, b.y, b.w, b.h, b.enabled, hover,
+                pressed, b.kind);
         }
         if (this.capturePath != "" && this.frames == this.captureFrame) {
             c.WritePixels(this.capturePath, 0, 0, c.Width(), c.Height());
@@ -309,12 +325,12 @@ public class VoxelGame : IGuiHostLoop {
         if (this.moveTimer > 0) { return; }
         this.moveTimer = 170;
         if (dx != 0 && this.TryMove(dx, 0)) {
-            this.facing = dx > 0 ? 0 : 1;
+            this.facing = VoxelFacing.FacingForStep(dx, 0);
             this.sfx.Step();
             return;
         }
         if (dz != 0 && this.TryMove(0, dz)) {
-            this.facing = dz > 0 ? 2 : 3;
+            this.facing = VoxelFacing.FacingForStep(0, dz);
             this.sfx.Step();
         }
     }
@@ -347,6 +363,8 @@ public class VoxelGame : IGuiHostLoop {
         this.placedTotal = this.placedTotal + 1;
         this.runPlaced = this.runPlaced + 1;
         this.sfx.Place();
+        // 落地反馈：一把扬尘（配合 place 音效，因果闭环）。
+        this.fx.SpawnPlaceDust(tx, tz, ty);
         return true;
     }
 
@@ -355,11 +373,14 @@ public class VoxelGame : IGuiHostLoop {
         int tx = this.TargetX();
         int tz = this.TargetZ();
         int ty = this.cursorY();
+        int kind = this.world.Get(tx, ty, tz);
         if (!this.build.Break(tx, ty, tz)) {
             this.sfx.Error();
             return false;
         }
         this.sfx.Break();
+        // 碎屑反馈：碎块按该方块的颜色飞出来。
+        this.fx.SpawnDebris(tx, tz, ty, kind);
         return true;
     }
 
@@ -483,10 +504,13 @@ public class VoxelGame : IGuiHostLoop {
     }
 
     int FacingToward(int tx, int tz) {
-        if (tx > this.playerX) { return 0; }
-        if (tx < this.playerX) { return 1; }
-        if (tz > this.playerZ) { return 2; }
-        return 3;
+        int dx = 0;
+        int dz = 0;
+        if (tx != this.playerX) { dx = tx > this.playerX ? 1 : -1; }
+        else if (tz != this.playerZ) { dz = tz > this.playerZ ? 1 : -1; }
+        int f = VoxelFacing.FacingForStep(dx, dz);
+        if (f < 0) { return this.facing; }
+        return f;
     }
 
     // ----- 按钮 -----------------------------------------------------------

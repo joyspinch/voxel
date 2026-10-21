@@ -1,0 +1,10 @@
+# UiDriver 脚本：截「设置浮层」的画面（Esc 打开）。
+#
+# 用法见 client/tools/shot_face_right.script（同一套约定）。
+# 键码 27 = Esc。
+move 640 500
+wait 400
+keydown 27
+wait 900
+keyup 27
+wait 2000

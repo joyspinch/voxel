@@ -55,6 +55,71 @@ public class VoxelPaint {
         c.DrawText(X(cx - tw / 2), Y(y), text, color, S(size));
     }
 
+    // 带投影的文字：同一串字画两遍（先深色偏移，再主题色）。
+    // 引擎没有描边/阴影文字 API，压在游戏画面上只能靠这层"假描边"保证可读。
+    public static void TextShadow(Canvas c, string text, int x, int y, int size,
+                                  int color, int shadow) {
+        if (text == null || text == "") { return; }
+        VoxelPaint.Text(c, text, x + 1, y + 2, size, shadow);
+        VoxelPaint.Text(c, text, x, y, size, color);
+    }
+
+    public static void TextShadowCentered(Canvas c, string text, int cx, int y,
+                                          int boxW, int size, int color,
+                                          int shadow) {
+        if (text == null || text == "") { return; }
+        int tw = Canvas.MeasureText(text, S(size));
+        VoxelPaint.Text(c, text, cx - tw / 2 + 1, y + 2, size, shadow);
+        VoxelPaint.Text(c, text, cx - tw / 2, y, size, color);
+    }
+
+    // 裁源矩形贴图：朝向精灵表靠它取帧，九宫格靠它切块。
+    // 源矩形是**源图像素**，不是显示像素。
+    public static void BlitSrc(Canvas c, string key, int x, int y, int w, int h,
+                               int sx, int sy, int sw, int sh) {
+        if (key == null || key == "") { return; }
+        if (w <= 0 || h <= 0 || sw <= 0 || sh <= 0) { return; }
+        c.BlitImage(key, X(x), Y(y), S(w), S(h), sx, sy, sw, sh);
+    }
+
+    // 九宫格贴图：把源图切成 9 块拼到目标矩形
+    // （四角原样、上下左右边拉伸、中间平铺）。
+    //
+    // 引擎没有 border-image，CSS 也没有九宫格，所以底板只能自己切。
+    // corner 是角切片的边长（**源图像素**）：所有圆弧与装饰都必须落在角
+    // 切片内，否则拉伸时会被拉变形。
+    public static void NineSlice(Canvas c, string key, int x, int y, int w, int h,
+                                 int corner) {
+        if (key == null || key == "") { return; }
+        if (w <= 0 || h <= 0) { return; }
+        int iw = Canvas.ImageWidth(key);
+        int ih = Canvas.ImageHeight(key);
+        if (iw <= 0 || ih <= 0) { return; }
+        int cnr = corner;
+        if (cnr > iw / 2) { cnr = iw / 2; }
+        if (cnr > ih / 2) { cnr = ih / 2; }
+        if (cnr > w / 2) { cnr = w / 2; }
+        if (cnr > h / 2) { cnr = h / 2; }
+        if (cnr <= 0) { return; }
+        int mw = iw - cnr * 2;      // 源图中间列/行宽
+        int mh = ih - cnr * 2;
+        int dw = w - cnr * 2;      // 目标中间列/行宽
+        int dh = h - cnr * 2;
+        // 四角：原样贴。
+        VoxelPaint.BlitSrc(c, key, x, y, cnr, cnr, 0, 0, cnr, cnr);
+        VoxelPaint.BlitSrc(c, key, x + w - cnr, y, cnr, cnr, iw - cnr, 0, cnr, cnr);
+        VoxelPaint.BlitSrc(c, key, x, y + h - cnr, cnr, cnr, 0, ih - cnr, cnr, cnr);
+        VoxelPaint.BlitSrc(c, key, x + w - cnr, y + h - cnr, cnr, cnr,
+            iw - cnr, ih - cnr, cnr, cnr);
+        // 四边：横边横拉、竖边竖拉。
+        VoxelPaint.BlitSrc(c, key, x + cnr, y, dw, cnr, cnr, 0, mw, cnr);
+        VoxelPaint.BlitSrc(c, key, x + cnr, y + h - cnr, dw, cnr, cnr, ih - cnr, mw, cnr);
+        VoxelPaint.BlitSrc(c, key, x, y + cnr, cnr, dh, 0, cnr, cnr, mh);
+        VoxelPaint.BlitSrc(c, key, x + w - cnr, y + cnr, cnr, dh, iw - cnr, cnr, cnr, mh);
+        // 中间：整块拉伸（底板中间是纯色/渐变，拉伸不会变形）。
+        VoxelPaint.BlitSrc(c, key, x + cnr, y + cnr, dw, dh, cnr, cnr, mw, mh);
+    }
+
     // 等距菱形轮廓（放置光标 / 图纸提示）。cx/cy 是菱形中心（逻辑坐标）。
     public static void Diamond(Canvas c, int cx, int cy, int hw, int hh,
                                int color, int t) {
@@ -72,6 +137,29 @@ public class VoxelPaint {
             int t = i * hw / steps;
             VoxelPaint.Fill(c, cx - t, cy - hh + i, t * 2 + 1, 1, color);
         }
+    }
+
+    // 菱形的一条边（描粗线）：edge = 0 上右(N→E) / 1 下右(E→S) /
+    // 2 下左(S→W) / 3 上左(W→N)。
+    //
+    // inset 是"往中心收"的比例（0 = 压在边上，0.12 = 落在顶面内侧 3px）：
+    // 接触阴影要画在顶面**内侧**，否则会被后画的邻块吃掉。
+    public static void DiamondEdge(Canvas c, int cx, int cy, int hw, int hh,
+                                   int edge, int color, int t, float inset) {
+        int x0 = cx;
+        int y0 = cy - hh;
+        int x1 = cx + hw;
+        int y1 = cy;
+        if (edge == 1) { x0 = cx + hw; y0 = cy; x1 = cx; y1 = cy + hh; }
+        else if (edge == 2) { x0 = cx; y0 = cy + hh; x1 = cx - hw; y1 = cy; }
+        else if (edge == 3) { x0 = cx - hw; y0 = cy; x1 = cx; y1 = cy - hh; }
+        float k = 1.0f - inset;
+        if (k < 0.0f) { k = 0.0f; }
+        int ax = cx + (int)((float)(x0 - cx) * k);
+        int ay = cy + (int)((float)(y0 - cy) * k);
+        int bx = cx + (int)((float)(x1 - cx) * k);
+        int by = cy + (int)((float)(y1 - cy) * k);
+        VoxelPaint.Line(c, ax, ay, bx, by, color, t);
     }
 
     // 毫秒 → "mm:ss"

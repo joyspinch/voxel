@@ -1,0 +1,89 @@
+// 朝向 → 取帧索引（纯函数，不碰画布）。
+//
+// 为什么必须离线烘焙：引擎运行时转不了图——Canvas.BlitImage 只有源矩形
+// (sx,sy,sw,sh)，没有旋转也没有水平翻转；Gui.SpriteBatch 的每精灵同样只有
+// dx,dy,dw,dh,sx,sy,sw,sh,tint。所以"把角色转个方向"只能在素材阶段做。
+//
+// 本项目的做法：玩家出一张**两帧精灵表**（player_sheet.png，192×128）
+//   帧索引 0 = 原图（朝右）
+//   帧索引 1 = 水平镜像（朝左）
+//   源矩形   = (索引 * 帧宽, 0, 帧宽, 帧高)   ← 源图像素，不是显示像素
+//
+// 等距投影里"朝右/朝左"是屏幕方向，不是网格方向：
+//   +x（East）  → 屏幕右下   → 朝右
+//   -x（West）  → 屏幕左上   → 朝左
+//   +z（South） → 屏幕左下   → 朝左
+//   -z（North） → 屏幕右上   → 朝右
+//
+// 帧宽/帧高是**入库图的像素**（显示尺寸的 2 倍），与
+// client/tools/make_assets.py 生成的精灵表一一对应；改那边必须同步改这里
+// （client/ASSETS.md 有同一份口径，断言用例按这里钉住）。
+public class VoxelFacing {
+    public const int FrameRight = 0;
+    public const int FrameLeft = 1;
+    public const int Frames = 2;
+
+    // 玩家精灵表：192x128 = 两帧 96x128（显示 48x64）。
+    public const int PlayerFrameW = 96;
+    public const int PlayerFrameH = 128;
+
+    // 逻辑朝向（与 VoxelGame.facing 同一套编号）。
+    public const int East = 0;    // +x
+    public const int West = 1;    // -x
+    public const int South = 2;   // +z
+    public const int North = 3;   // -z
+
+    // 逻辑朝向 → 屏幕朝向（朝右 / 朝左）。纯函数。
+    public static bool FacingRight(int facing) {
+        return facing == VoxelFacing.East || facing == VoxelFacing.North;
+    }
+
+    // 屏幕朝向 → 取帧索引。纯函数。
+    public static int Frame(bool facingRight) {
+        return facingRight ? VoxelFacing.FrameRight : VoxelFacing.FrameLeft;
+    }
+
+    // 逻辑朝向 → 取帧索引。纯函数。
+    public static int FrameOf(int facing) {
+        return VoxelFacing.Frame(VoxelFacing.FacingRight(facing));
+    }
+
+    // 取帧的源矩形左边界（源图像素）。
+    public static int SrcX(bool facingRight) {
+        return VoxelFacing.Frame(facingRight) * VoxelFacing.PlayerFrameW;
+    }
+
+    // 逻辑朝向 → 取帧的源矩形左边界（源图像素）。
+    public static int SrcXOf(int facing) {
+        return VoxelFacing.SrcX(VoxelFacing.FacingRight(facing));
+    }
+
+    // 走一格之后的朝向（移动 → 朝向的唯一出口，纯函数）。
+    // dx/dz 只有一个非零；都没动时返回 -1（调用方不该改朝向）。
+    public static int FacingForStep(int dx, int dz) {
+        if (dx > 0) { return VoxelFacing.East; }
+        if (dx < 0) { return VoxelFacing.West; }
+        if (dz > 0) { return VoxelFacing.South; }
+        if (dz < 0) { return VoxelFacing.North; }
+        return -1;
+    }
+
+    // 逻辑朝向 → 屏幕方向（光标箭头指着的那一侧）。
+    // 等距 2:1 投影里，网格方向在屏幕上是斜的：
+    //   +x → 屏幕右下 (+2,+1)；-x → 左上 (-2,-1)
+    //   +z → 屏幕左下 (-2,+1)；-z → 右上 (+2,-1)
+    // 返回值可以直接当屏幕方向向量用（x 向右、y 向下为正）。
+    public static int DirX(int facing) {
+        if (facing == VoxelFacing.East) { return 2; }
+        if (facing == VoxelFacing.West) { return -2; }
+        if (facing == VoxelFacing.South) { return -2; }
+        return 2;
+    }
+
+    public static int DirY(int facing) {
+        if (facing == VoxelFacing.East) { return 1; }
+        if (facing == VoxelFacing.West) { return -1; }
+        if (facing == VoxelFacing.South) { return 1; }
+        return -1;
+    }
+}
