@@ -111,7 +111,7 @@ PROJECT.md
 
 ## 许可
 
-本仓库暂未附带 `LICENSE` 文件，开源许可待作者选定后补充。依赖的 zan-lang 仓库采用 ZCSL（Zan Community Source License 1.0）。
+本仓库采用 [MIT 许可](LICENSE)。依赖的 zan-lang 仓库采用 ZCSL（Zan Community Source License 1.0）。
 
 ## 更多文档
 
