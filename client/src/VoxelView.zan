@@ -96,7 +96,7 @@ public class VoxelView {
     public void Plate(Canvas c, string path, int x, int y, int w, int h,
                       int corner, int fallback) {
         if (path != "") {
-            VoxelPaint.NineSlice(c, path, x, y, w, h, corner);
+            CKitSlice.NineSliceKey(c, path, x, y, w, h, corner);
             return;
         }
         VoxelPaint.FillRound(c, x, y, w, h, 8, fallback);
@@ -198,7 +198,7 @@ public class VoxelView {
         // 脚下投影：软椭圆贴图（贴图缺失时退回半透明菱形）。
         this.DrawShadow(c, cx, groundY + 2, 54, 26);
         if (this.playerPath != "") {
-            VoxelPaint.BlitSrc(c, this.playerPath, left, topY, w, h,
+            CDraw.BlitImageSrcKey(c, this.playerPath, left, topY, w, h,
                 VoxelFacing.SrcXOf(game.facing), 0,
                 VoxelFacing.PlayerFrameW, VoxelFacing.PlayerFrameH);
         } else {
@@ -337,8 +337,8 @@ public class VoxelView {
         this.Plate(c, this.barPath, 0, 0, w, 48, VoxelView.BarCorner,
             VoxelPalette.BarBg);
         VoxelPaint.Fill(c, 0, 46, w, 2, VoxelPalette.AccentDim);
-        VoxelPaint.TextShadow(c, "立方世界 · VOXEL", 16, 12, 22,
-            VoxelPalette.AccentText, VoxelPalette.FgShadow);
+        CText.DrawShadowPx(c, "立方世界 · VOXEL", 16, 12, 22,
+            VoxelPalette.AccentText, VoxelPalette.FgShadow, 1, 2);
         string planText = "图纸 " + Convert.ToString(game.planIndex + 1) + "/"
             + Convert.ToString(game.plans.Count());
         if (plan != null) {
@@ -349,13 +349,13 @@ public class VoxelView {
             planText = "图纸 " + Convert.ToString(game.plans.Count()) + "/"
                 + Convert.ToString(game.plans.Count()) + "   全部建成";
         }
-        VoxelPaint.TextShadow(c, planText, 250, 17, 15,
-            VoxelPalette.FgSecondary, VoxelPalette.FgShadow);
+        CText.DrawShadowPx(c, planText, 250, 17, 15,
+            VoxelPalette.FgSecondary, VoxelPalette.FgShadow, 1, 2);
         int left = game.planLimitMs();
         string timeText = VoxelPaint.FmtTime(game.elapsedMs);
         if (left > 0) { timeText = timeText + "   剩余 " + VoxelPaint.FmtTime(left); }
-        VoxelPaint.TextShadow(c, timeText, w - 210, 17, 15,
-            VoxelPalette.AccentText, VoxelPalette.FgShadow);
+        CText.DrawShadowPx(c, timeText, w - 210, 17, 15,
+            VoxelPalette.AccentText, VoxelPalette.FgShadow, 1, 2);
 
         if (plan != null) { this.DrawPlanCard(c, game, 16, 58); }
 
@@ -380,15 +380,15 @@ public class VoxelView {
             if (path != "") {
                 CDraw.BlitImage(c, path, x + 8, y0 + 2, slot - 16, slot - 16);
             }
-            VoxelPaint.TextShadow(c, Convert.ToString(game.build.Stock(k)),
+            CText.DrawShadowPx(c, Convert.ToString(game.build.Stock(k)),
                 x + slot - 24, y0 + slot - 24, 16,
-                VoxelPalette.FgPrimary, VoxelPalette.FgShadow);
-            VoxelPaint.TextShadow(c, Convert.ToString(k), x + 6, y0 + 4, 14,
-                VoxelPalette.AccentText, VoxelPalette.FgShadow);
+                VoxelPalette.FgPrimary, VoxelPalette.FgShadow, 1, 2);
+            CText.DrawShadowPx(c, Convert.ToString(k), x + 6, y0 + 4, 14,
+                VoxelPalette.AccentText, VoxelPalette.FgShadow, 1, 2);
         }
-        VoxelPaint.TextShadow(c, "1 草  2 石  3 木  4 矿   ·   Q/E 升降建造高度   ·   "
+        CText.DrawShadowPx(c, "1 草  2 石  3 木  4 矿   ·   Q/E 升降建造高度   ·   "
             + "WASD/方向键 移动   ·   左键放置  右键破坏   ·   Esc 设置",
-            16, h - 26, 14, VoxelPalette.FgSecondary, VoxelPalette.FgShadow);
+            16, h - 26, 14, VoxelPalette.FgSecondary, VoxelPalette.FgShadow, 1, 2);
     }
 
     // 左侧图纸卡：羊皮纸底板 + 图纸名 + 进度 + 材料清单。
@@ -403,11 +403,11 @@ public class VoxelView {
         }
         VoxelPaint.Round(c, x, y, cw, ch, 6, VoxelPalette.Edge, 2);
         if (plan == null) { return; }
-        VoxelPaint.Text(c, "图纸 " + Convert.ToString(game.planIndex + 1)
+        CText.DrawPx(c, "图纸 " + Convert.ToString(game.planIndex + 1)
             + " · " + plan.name, x + 12, y + 12, 17, 0xFF3A2A12);
-        VoxelPaint.Text(c, plan.brief, x + 12, y + 36, 13, 0xFF5A4426);
+        CText.DrawPx(c, plan.brief, x + 12, y + 36, 13, 0xFF5A4426);
         int done = game.plans.Progress(game.planIndex, game.world);
-        VoxelPaint.Text(c, "进度 " + Convert.ToString(done) + " / "
+        CText.DrawPx(c, "进度 " + Convert.ToString(done) + " / "
             + Convert.ToString(plan.reqs.Length), x + 12, y + 56, 15, 0xFF2E4A6B);
         VoxelPaint.Fill(c, x + 12, y + 78, cw - 24, 6, 0x55FFFFFF);
         int w = cw - 24;
@@ -419,7 +419,7 @@ public class VoxelView {
         for (int k = 1; k < VoxelWorld.KindCount; k = k + 1) {
             int need = game.plans.NeedOf(game.planIndex, k);
             if (need <= 0) { continue; }
-            VoxelPaint.Text(c, names[k - 1] + " ×" + Convert.ToString(need),
+            CText.DrawPx(c, names[k - 1] + " ×" + Convert.ToString(need),
                 x + 12, ty, 14, 0xFF4A3418);
             ty = ty + 19;
         }
@@ -440,24 +440,22 @@ public class VoxelView {
         if (this.titlePath != "") {
             CDraw.BlitImage(c, this.titlePath, (w - pw) / 2, 70, pw, pw / 4);
         }
-        VoxelPaint.TextShadowCentered(c, "立  方  世  界", w / 2, 130, w, 56,
-            VoxelPalette.AccentText, VoxelPalette.FgShadow);
-        VoxelPaint.TextShadowCentered(c, "VOXEL · 等距体素建造", w / 2, 196, w, 18,
-            VoxelPalette.FgPrimary, VoxelPalette.FgShadow);
-        VoxelPaint.TextShadowCentered(c, "按图纸把石台、灯柱、瞭望塔一层层建起来",
-            w / 2, 226, w, 16, VoxelPalette.FgSecondary, VoxelPalette.FgShadow);
+        CText.DrawCenteredShadowPx(c, "立  方  世  界", w / 2, 130, 56,
+            VoxelPalette.AccentText, VoxelPalette.FgShadow, 1, 2);
+        CText.DrawCenteredShadowPx(c, "VOXEL · 等距体素建造", w / 2, 196, 18,
+            VoxelPalette.FgPrimary, VoxelPalette.FgShadow, 1, 2);
+        CText.DrawCenteredShadowPx(c, "按图纸把石台、灯柱、瞭望塔一层层建起来", w / 2, 226, 16, VoxelPalette.FgSecondary, VoxelPalette.FgShadow, 1, 2);
         string best = "尚无记录";
         if (game.shell.BestTimeMs() > 0) {
             best = VoxelPaint.FmtTimeFine(game.shell.BestTimeMs());
         }
-        VoxelPaint.TextShadowCentered(c,
+        CText.DrawCenteredShadowPx(c,
             "累计建成图纸 " + Convert.ToString(game.shell.BlueprintsDone())
             + "   累计放置方块 " + Convert.ToString(game.shell.BlocksPlaced())
             + "   最快通关 " + best
             + "   出场 " + Convert.ToString(game.shell.Runs()) + " 次",
-            w / 2, h - 150, w, 18, VoxelPalette.FgPrimary, VoxelPalette.FgShadow);
-        VoxelPaint.TextShadowCentered(c, "点击「开始建造」· Esc 打开设置",
-            w / 2, h - 110, w, 15, VoxelPalette.FgTertiary, VoxelPalette.FgShadow);
+            w / 2, h - 150, 18, VoxelPalette.FgPrimary, VoxelPalette.FgShadow, 1, 2);
+        CText.DrawCenteredShadowPx(c, "点击「开始建造」· Esc 打开设置", w / 2, h - 110, 15, VoxelPalette.FgTertiary, VoxelPalette.FgShadow, 1, 2);
     }
 
     // 结算面板
@@ -478,12 +476,12 @@ public class VoxelView {
             title = "建造失败";
             titleCol = VoxelPalette.Danger;
         }
-        VoxelPaint.TextShadowCentered(c, title, px + pw / 2, py + 28, pw, 34,
-            titleCol, VoxelPalette.FgShadow);
+        CText.DrawCenteredShadowPx(c, title, px + pw / 2, py + 28, 34,
+            titleCol, VoxelPalette.FgShadow, 1, 2);
         string reason = game.failReason;
         if (reason == "") { reason = "三张图纸全部建成，工地交付"; }
-        VoxelPaint.TextShadowCentered(c, reason, px + pw / 2, py + 72, pw, 16,
-            VoxelPalette.FgSecondary, VoxelPalette.FgShadow);
+        CText.DrawCenteredShadowPx(c, reason, px + pw / 2, py + 72, 16,
+            VoxelPalette.FgSecondary, VoxelPalette.FgShadow, 1, 2);
         int ty = py + 112;
         string[] labels = new string[] {
             "建成图纸", "本局用时", "最快通关", "本局放置", "累计放置"
@@ -496,8 +494,8 @@ public class VoxelView {
             Convert.ToString(game.shell.BlocksPlaced() + game.runPlaced)
         };
         for (int i = 0; i < labels.Length; i = i + 1) {
-            VoxelPaint.Text(c, labels[i], px + 44, ty, 17, VoxelPalette.FgSecondary);
-            VoxelPaint.Text(c, values[i], px + 250, ty, 17, VoxelPalette.FgPrimary);
+            CText.DrawPx(c, labels[i], px + 44, ty, 17, VoxelPalette.FgSecondary);
+            CText.DrawPx(c, values[i], px + 250, ty, 17, VoxelPalette.FgPrimary);
             ty = ty + 32;
         }
     }
@@ -520,7 +518,7 @@ public class VoxelView {
             text = VoxelPalette.FgTertiary;
         }
         if (path != "") {
-            VoxelPaint.NineSlice(c, path, x, y, w, h, VoxelView.ButtonCorner);
+            CKitSlice.NineSliceKey(c, path, x, y, w, h, VoxelView.ButtonCorner);
         } else {
             int bg = VoxelPalette.PanelBgSoft;
             if (kind == 1) { bg = VoxelPalette.Accent; }
@@ -529,7 +527,7 @@ public class VoxelView {
             VoxelPaint.Round(c, x, y, w, h, 6, VoxelPalette.Edge, 2);
         }
         if (kind == 1 && !enabled) { text = VoxelPalette.FgTertiary; }
-        VoxelPaint.TextShadowCentered(c, label, x + w / 2, y + (h - 20) / 2, w, 19,
-            text, VoxelPalette.FgShadow);
+        CText.DrawCenteredShadowPx(c, label, x + w / 2, y + (h - 20) / 2, 19,
+            text, VoxelPalette.FgShadow, 1, 2);
     }
 }
