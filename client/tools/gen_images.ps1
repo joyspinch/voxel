@@ -3,7 +3,7 @@
 # 生成的 1024² 原图落在 build/raw/（.gitignore 已忽略），**不入库**；
 # 随后由 client/tools/make_assets.py 抠黑底、裁边、缩放到显示尺寸 2 倍再入库。
 #
-# 需要 OPENAI_API_KEY（由 D:\project\secrets.local.ps1 提供）。
+# 需要 OPENAI_API_KEY（由本机的 secrets.local.ps1 提供；该文件不随本仓发布）。
 # 单张生成也可以直接调 image2.ps1，提示词见下面 $jobs。
 param(
     [string]$Image2Script = "$HOME\.codex\skills\local-image2\scripts\image2.ps1",

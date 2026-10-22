@@ -4,8 +4,8 @@
 #   $out = 'build/voxel'
 #   $env:VOXEL_AUTOSTART = '1'
 #   $env:ZAN_UI_OUT = "$out/uidrv"
-#   $env:ZAN_UI_SCRIPT = 'D:\project\games\voxel\client\tools\shot_face_right.script'
-#   python D:/project/zan-lang/scripts/shot_window.py `
+#   $env:ZAN_UI_SCRIPT = 'client/tools/shot_face_right.script'
+#   python "$env:ZAN_HOME/scripts/shot_window.py" `
 #     "$out/Voxel.exe" "$out/ui_face_right.png" 5.0 $out
 #
 # 脚本按 UiDriver 语法逐行注入合成输入：

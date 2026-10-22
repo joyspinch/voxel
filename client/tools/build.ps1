@@ -3,9 +3,9 @@
 # 公共包（Gui / Game.Kit / Game.Foundation / Game.Tactics …）住在 zan-lang
 # 仓库的 packages/ 下，编译要带 --package-project 指向包根。
 #
-# 公共包**直接用主仓**（默认 D:\project\zan-lang，只读），不要建 git worktree
-# 副本：副本停在旧 commit 上，公共包一改就不跟（已因此出过故障）。要换包根
-# 用 $ZAN_HOME 或 -PackageProject 覆盖。
+# 公共包**直接用主仓**（只读），不要建 git worktree 副本：副本停在旧 commit
+# 上，公共包一改就不跟（已因此出过故障）。包根用 $ZAN_HOME 或 -PackageProject
+# 指定。
 #
 # assets/ 由 zanc 自动内嵌进 exe（入口源文件带目录前缀时才会定位到），
 # 这里再在 exe 旁留一份磁盘副本——运行时磁盘优先，换图即生效。
@@ -28,7 +28,6 @@ if (-not $Stdlib -and $env:ZAN_HOME) { $Stdlib = Join-Path $env:ZAN_HOME 'stdlib
 if (-not $PackageProject) {
     # 公共包根 = 主仓 zan-lang（packages/ 在它下面）。$ZAN_HOME 优先。
     if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME }
-    elseif (Test-Path 'D:\project\zan-lang\packages') { $PackageProject = 'D:\project\zan-lang' }
     else { throw '需要 -PackageProject（或 $env:ZAN_HOME）指向 zan-lang 仓库——公共包在它的 packages/ 下' }
 }
 if (-not (Test-Path (Join-Path $PackageProject 'packages'))) {

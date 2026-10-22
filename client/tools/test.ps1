@@ -21,7 +21,6 @@ if (-not $Compiler) {
 if (-not $PackageProject) {
     # 公共包根 = 主仓 zan-lang（packages/ 在它下面）。$ZAN_HOME 优先。
     if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME }
-    elseif (Test-Path 'D:\project\zan-lang\packages') { $PackageProject = 'D:\project\zan-lang' }
     else { throw '需要 -PackageProject（或 $env:ZAN_HOME）指向 zan-lang 仓库——公共包在它的 packages/ 下' }
 }
 if (-not (Test-Path (Join-Path $PackageProject 'packages'))) {

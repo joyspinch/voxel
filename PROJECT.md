@@ -4,7 +4,7 @@
 > 玩法闭环：**按图纸逐格放置 → 每格类型与位置都对 → 图纸建成、解锁下一张 →
 > 全部建成结算；材料耗尽或超时则失败结算。**
 > 素材清单见 [`client/ASSETS.md`](client/ASSETS.md)，交付标准见
-> `D:\project\zan-lang\docs\REAL_GAME_STANDARD.md`。
+> zan-lang 仓库的 `docs/REAL_GAME_STANDARD.md`。
 
 ---
 
@@ -75,13 +75,13 @@
 ## 三、怎么跑
 
 ```powershell
-$env:ZAN_HOME = 'D:\project\zan-lang'          # 编译器与 stdlib 同源
+$env:ZAN_HOME = 'D:/path/to/zan-lang'          # 编译器与 stdlib 同源
 pwsh -File client\tools\build.ps1
 # 产出 build/voxel/Voxel.exe（assets/ 与 skins/ 会一并复制到 exe 旁，运行时磁盘优先）
 ```
 
-- 编译用 `D:\project\zan-lang\build\zanc.exe`。
-- **公共包直接用主仓** `D:\project\zan-lang`（`--package-project` 指向仓库根，
+- 编译用 `$env:ZAN_HOME\build\zanc.exe`。
+- **公共包直接用主仓** `$env:ZAN_HOME`（`--package-project` 指向仓库根，
   包从它的 `packages/` 解析，只读）。脚本默认就指主仓，`$env:ZAN_HOME` 或
   `-PackageProject` 可覆盖。**不要建 git worktree 副本**——副本停在旧 commit，
   公共包一改就不跟（已因此出过故障：goldminer 自建的包副本）。
@@ -123,7 +123,7 @@ pwsh -File client\tools\test.ps1
 截图验收（抓**窗口像素**，不是画布）：
 
 ```powershell
-python D:\project\zan-lang\scripts\shot_window.py `
+python "$env:ZAN_HOME\scripts\shot_window.py" `
     build\voxel\Voxel.exe build\voxel\shot.png 2.0 build\voxel
 ```
 
@@ -135,7 +135,7 @@ $out = 'build/voxel'
 $env:VOXEL_AUTOSTART = '1'        # 直接进工地
 $env:ZAN_UI_OUT = "$out/uidrv"
 $env:ZAN_UI_SCRIPT = "$PWD/client/tools/shot_face_right.script"
-python D:\project\zan-lang\scripts\shot_window.py "$out/Voxel.exe" "$out/ui_face_right.png" 5.0 $out
+python "$env:ZAN_HOME\scripts\shot_window.py" "$out/Voxel.exe" "$out/ui_face_right.png" 5.0 $out
 ```
 
 > `ZAN_UI_SCRIPT` 的路径必须是**绝对路径**：截图脚本把工作目录设成 exe 所在
